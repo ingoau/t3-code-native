@@ -114,6 +114,13 @@ class ScreenshotTest {
         capture("06_thread_worked_for_expanded")
     }
 
+    @Test fun thread_settled() {
+        val base = Fixtures.conversationState(live = false)
+        val settled = base.copy(thread = base.thread?.copy(settledAt = Fixtures.ago(7200)))
+        render(false) { ThreadScreen(threadState(settled, "Fix flaky websocket reconnect test", "t3code · Julius's MacBook Pro"), ThreadCallbacks(), "t1") }
+        capture("17_thread_settled")
+    }
+
     @Test fun thread_approval() {
         render(false) { ThreadScreen(threadState(Fixtures.approvalState(), "Add rate limiting to the public webhooks endpoint", "acme-api · Julius's MacBook Pro"), ThreadCallbacks(), "t2") }
         capture("07_thread_approval")

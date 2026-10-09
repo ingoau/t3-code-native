@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -86,6 +87,11 @@ class LiveServerTest {
             withTimeout(10_000) { conn.shell.first { it.threads[threadId]?.pinnedAt != null } }
             println("Renamed + pinned")
 
+            // Settle, then see whether a new message brings it back on its own (the app also un-settles explicitly).
+            conn.run(cmds.housekeeping(threadId, ThreadOp.Settle)!!)
+            withTimeout(10_000) { conn.shell.first { it.threads[threadId]?.isSettled == true } }
+            println("Settled")
+
             val detail = withTimeout(10_000) { conn.observeThread(threadId).first { it.loaded } }
             println("Thread detail loaded: seq=${detail.sequence} items=${detail.items.size} title=${detail.thread?.title}")
             assertEquals("Renamed from Android", detail.thread?.title)
@@ -94,6 +100,9 @@ class LiveServerTest {
                 conn.run(cmds.send(threadId, "hello from the native client", null, Commands.DispatchMode.StartImmediately, JsonArray(emptyList()), null, "full-access", "default"))
             }
             println("Send message result: ${sendResult.getOrNull() ?: sendResult.exceptionOrNull()?.message}")
+            val reopened = withTimeoutOrNull(5_000) { conn.shell.first { it.threads[threadId]?.isSettled == false } } != null
+            println("Server un-settled on send: $reopened")
+            if (!reopened) conn.run(cmds.housekeeping(threadId, ThreadOp.Unsettle)!!)
             val afterSend = withTimeout(10_000) { conn.observeThread(threadId).first { s -> s.items.values.any { it.type == "user_message" } } }
             println("Timeline after send: " + afterSend.timeline.joinToString { "${it.type}[${it.status}]" })
             assertTrue(afterSend.timeline.any { it.type == "user_message" && it.text == "hello from the native client" })

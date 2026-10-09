@@ -1,4 +1,6 @@
 <resources>
-    <color name="t3_background">#FF0B0B0F</color>
+    <color name="t3_background">#FFFCFCFC</color>
     <color name="ic_launcher_background">#FF000000</color>
+    <!-- The splash shows the white T3 mark, so it stays black in both themes (like the launcher icon). -->
+    <color name="splash_background">#FF000000</color>
 </resources>

@@ -130,6 +130,7 @@ sealed interface ThreadAction {
     data object Unpin : ThreadAction
     data object Settle : ThreadAction
     data object Unsettle : ThreadAction
+    data object Unsnooze : ThreadAction
     data object Archive : ThreadAction
     data object Delete : ThreadAction
     data object MarkUnread : ThreadAction
@@ -156,7 +157,7 @@ fun HomeScreen(
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var projectFilter by rememberSaveable { mutableStateOf<String?>(null) }
-    var settledExpanded by rememberSaveable { mutableStateOf(true) }
+    var settledExpanded by rememberSaveable { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<ThreadEntry?>(null) }
     var deleting by remember { mutableStateOf<ThreadEntry?>(null) }
     var refreshing by remember { mutableStateOf(false) }
@@ -476,19 +477,35 @@ private fun SwipeableThreadRow(
     LaunchedEffect(swipe.targetValue) { if (swipe.targetValue != SwipeToDismissBoxValue.Settled) h.threshold() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val primaryAction = if (settled) ThreadAction.Unsettle else ThreadAction.Settle
+    // SwipeToDismissBox re-invokes onDismiss whenever the callback instance changes while the row is still in a
+    // dismissed position. Acting (pin/settle) recomposes this row, so the callback must be stable and fire once per
+    // gesture, otherwise the action toggles back and forth forever.
+    val latestEntry by androidx.compose.runtime.rememberUpdatedState(entry)
+    val latestPrimary by androidx.compose.runtime.rememberUpdatedState(primaryAction)
+    val latestOnAction by androidx.compose.runtime.rememberUpdatedState(onAction)
+    val handled = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val onDismiss: (SwipeToDismissBoxValue) -> Unit = remember(swipe) {
+        { value ->
+            if (value != SwipeToDismissBoxValue.Settled && handled.compareAndSet(false, true)) {
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                val e = latestEntry
+                when (value) {
+                    SwipeToDismissBoxValue.EndToStart -> latestOnAction(e, latestPrimary)
+                    SwipeToDismissBoxValue.StartToEnd -> latestOnAction(e, if (e.thread.isPinned) ThreadAction.Unpin else ThreadAction.Pin)
+                    else -> Unit
+                }
+                scope.launch {
+                    swipe.reset()
+                    handled.set(false)
+                }
+            }
+        }
+    }
     SwipeToDismissBox(
         state = swipe,
         enableDismissFromStartToEnd = true,
         enableDismissFromEndToStart = true,
-        onDismiss = { value ->
-            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-            when (value) {
-                SwipeToDismissBoxValue.EndToStart -> onAction(entry, primaryAction)
-                SwipeToDismissBoxValue.StartToEnd -> onAction(entry, if (entry.thread.isPinned) ThreadAction.Unpin else ThreadAction.Pin)
-                else -> Unit
-            }
-            scope.launch { swipe.reset() }
-        },
+        onDismiss = onDismiss,
         backgroundContent = {
             val direction = swipe.dismissDirection
             val bg by animateColorAsState(

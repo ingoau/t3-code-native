@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.Snooze
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -242,6 +244,7 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                     AnimatedVisibility(approvals.isNotEmpty(), enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
                         approvals.firstOrNull()?.let { a -> ApprovalCard(a, onDecision = { callbacks.onApproval(a.requestId, it) }) }
                     }
+                    ThreadStateLine(state.shell, callbacks)
                     if (question != null) {
                         UserInputCard(
                             question,
@@ -433,3 +436,45 @@ private fun QueueCard(detail: ThreadState, canSteer: Boolean, callbacks: ThreadC
         }
     }
 }
+
+/** One quiet line above the composer for settled/snoozed threads; sending a message clears either. */
+@Composable
+private fun ThreadStateLine(shell: ThreadShell?, callbacks: ThreadCallbacks) {
+    val haptics = codes.t3.android.ui.components.rememberHaptics()
+    val (icon, label, action, onAction) = when {
+        shell == null -> return
+        shell.isSnoozed -> StateLine(
+            Icons.Rounded.Snooze,
+            "Snoozed" + (codes.t3.android.ui.util.parseInstant(shell.snoozedUntil)?.let { ", wakes in " + codes.t3.android.ui.util.relativeAge(Instant.now().toString(), it) } ?: ""),
+            "Wake now",
+        ) { callbacks.onThreadAction(ThreadAction.Unsnooze) }
+        shell.isSettled -> StateLine(
+            Icons.Rounded.CheckCircle,
+            "Settled" + (codes.t3.android.ui.util.relativeAge(shell.settledAt).takeIf { it.isNotEmpty() }?.let { if (it == "now") " just now" else " $it ago" } ?: ""),
+            "Un-settle",
+        ) { callbacks.onThreadAction(ThreadAction.Unsettle) }
+        else -> return
+    }
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "Sending a message moves it back to Active",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            TextButton(onClick = { haptics.tick(); onAction() }) { Text(action) }
+        }
+    }
+}
+
+private data class StateLine(val icon: androidx.compose.ui.graphics.vector.ImageVector, val label: String, val action: String, val onAction: () -> Unit)

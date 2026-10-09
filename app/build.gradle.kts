@@ -30,8 +30,6 @@ android {
         targetSdk = 37
         versionCode = releaseVersionCode ?: 1
         versionName = releaseVersionName ?: "0.1.0"
-        // 32-bit x86 is effectively emulator-only and doubles the size of ML Kit's native QR decoder.
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
     signingConfigs {
@@ -98,10 +96,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.datastore.preferences)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-    implementation(libs.mlkit.barcode)
+    implementation(libs.gms.code.scanner)
 
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

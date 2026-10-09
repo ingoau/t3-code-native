@@ -1,13 +1,7 @@
 package codes.t3.android.ui.environments
 
 import codes.t3.android.ui.components.rememberHaptics
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.QrCodeScanner
@@ -53,13 +48,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import codes.t3.android.data.pairing.Pairing
 import codes.t3.android.data.pairing.PairingTarget
 
@@ -75,17 +68,26 @@ fun AddEnvironmentScreen(
     val prefill = remember(initialLink) { initialLink?.let { Pairing.parse(it) } }
     var address by rememberSaveable { mutableStateOf(prefill?.httpBaseUrl?.substringAfter("://")?.trimEnd('/') ?: "") }
     var code by rememberSaveable { mutableStateOf(prefill?.token ?: "") }
-    var scanning by rememberSaveable { mutableStateOf(false) }
     var scanError by remember { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
-    val inPreview = LocalInspectionMode.current
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) scanning = true else scanError = "Camera access was denied. You can still enter the address and code below."
-    }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val target = Pairing.manual(address, code)
     val haptics = rememberHaptics()
     // Success pops this screen; an error arriving means pairing failed.
     androidx.compose.runtime.LaunchedEffect(error) { if (error != null) haptics.reject() }
+    fun accept(raw: String, fromScan: Boolean) {
+        val parsed = Pairing.parse(raw)
+        if (parsed?.token != null) {
+            haptics.confirm()
+            scanError = null
+            address = parsed.httpBaseUrl.substringAfter("://").trimEnd('/')
+            code = parsed.token
+            onConnect(parsed)
+        } else {
+            haptics.reject()
+            scanError = if (fromScan) "That QR code isn't a T3 Code pairing link." else "The clipboard doesn't contain a T3 Code pairing link."
+        }
+    }
+    val scan = rememberQrScanner(onResult = { accept(it, fromScan = true) }, onError = { scanError = it })
     val valid = target?.token != null
 
     Scaffold(
@@ -105,60 +107,41 @@ fun AddEnvironmentScreen(
                 .padding(horizontal = 16.dp),
         ) {
             Surface(
-                onClick = {
-                    if (scanning) return@Surface
-                    scanError = null
-                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-                    if (granted) scanning = true else permission.launch(Manifest.permission.CAMERA)
-                },
+                onClick = { haptics.contextClick(); scanError = null; scan() },
+                enabled = !connecting,
                 shape = RoundedCornerShape(32.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth().height(280.dp),
+                modifier = Modifier.fillMaxWidth().height(260.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    if (scanning && !inPreview) {
-                        QrScanner(
-                            onScanned = { raw ->
-                                val parsed = Pairing.parse(raw)
-                                if (parsed?.token != null) {
-                                    haptics.confirm()
-                                    scanning = false
-                                    address = parsed.httpBaseUrl.substringAfter("://").trimEnd('/')
-                                    code = parsed.token
-                                    onConnect(parsed)
-                                } else {
-                                    haptics.reject()
-                                    scanError = "Scanned QR code was not recognized as a T3 Code pairing link."
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(32.dp)),
-                        )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(
-                            Modifier
-                                .size(190.dp)
-                                .border(BorderStroke(3.dp, Color.White.copy(alpha = 0.9f)), RoundedCornerShape(36.dp)),
-                        )
-                    } else {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box(
-                                Modifier.size(112.dp).clip(MaterialShapes.Cookie12Sided.toShape()),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Surface(color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxSize()) {}
-                                Icon(Icons.Rounded.QrCodeScanner, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                            }
-                            Spacer(Modifier.height(16.dp))
-                            Text("Tap to scan", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "Scan the code from `t3 pair` or the desktop Connections settings",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 32.dp, vertical = 4.dp),
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            )
+                            Modifier.size(112.dp).clip(MaterialShapes.Cookie12Sided.toShape()),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Surface(color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxSize()) {}
+                            Icon(Icons.Rounded.QrCodeScanner, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
                         }
+                        Spacer(Modifier.height(16.dp))
+                        Text("Tap to scan", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Scan the code from `t3 pair` or the desktop Connections settings",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 32.dp, vertical = 4.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
                     }
                 }
+            }
+            androidx.compose.material3.TextButton(
+                onClick = { clipboard.getText()?.text?.let { accept(it, fromScan = false) } ?: run { scanError = "The clipboard is empty." } },
+                enabled = !connecting,
+                modifier = Modifier.padding(top = 4.dp),
+            ) {
+                Icon(Icons.Rounded.ContentPaste, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Paste pairing link")
             }
             scanError?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp, start = 8.dp))

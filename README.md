@@ -19,12 +19,13 @@ self-hosted `t3` server, over your LAN or tailnet. There is no T3 Connect, cloud
 
 ## Features
 
-- **Pairing:** scan the QR code from `t3 pair`, paste a pairing link, or type the address and code. Supported links:
+- **Pairing:** scan the QR code from `t3 pair` (Google Play services' code scanner, so no camera permission), paste a
+  pairing link from the clipboard, or type the address and code. Supported links:
   `t3code://…?pairingUrl=`, hosted `?host=` links and direct `/pair#token=` links. Access tokens are encrypted with
   an Android Keystore key. You can pair several machines and turn each on or off.
 - **Inbox:** threads from every environment in one list, grouped into Pinned, Active and Settled. Status pills show
   Approval, Input, Working, Plan ready, Failed and Done. You can filter by project, search, and pull to refresh.
-  - Swipe right to pin and left to settle.
+  - Swipe right to pin and left to settle (or un-settle). Settled threads are collapsed by default.
   - Long-press to rename, mark as unread, archive or delete.
 - **Thread:**
   - Live streaming chat with Markdown, syntax-highlighted code blocks and a Copy button.
@@ -33,6 +34,8 @@ self-hosted `t3` server, over your LAN or tailnet. There is no T3 Connect, cloud
   - Finished turns fold into "Worked for 2m 14s".
   - Expanding a row shows command output, inline diffs and reasoning.
   - A floating pill shows "Working 1m 23s" or the connection state.
+  - Settled and snoozed threads show a line above the composer. Sending a message moves the thread back to Active,
+    as on the web.
 - **Agent requests:** approval cards (Allow once, Allow for session, Decline) and multiple-choice or free-text
   question cards. Proposed plans show as cards with an "Implement plan" button, and todo lists as checklists.
 - **Composer:**
@@ -47,7 +50,8 @@ self-hosted `t3` server, over your LAN or tailnet. There is no T3 Connect, cloud
 - **Archive, environment management and settings:** theme (System, Light or Dark), Material You or T3 brand colors,
   pure black, code wrapping, Enter-to-send, and the default follow-up behavior (queue or steer).
 - **Feel:** expressive motion and shapes (cookie and sunny loading shapes, shape-morphing buttons, connected button
-  groups, segmented lists), haptics throughout, edge-to-edge layout, predictive back, and the DM Sans typeface the
+  groups, segmented lists), haptics throughout, edge-to-edge layout, Material shared-axis page transitions (as in Android Settings) that predictive back scrubs in
+  reverse, and the DM Sans typeface the
   upstream app uses.
 
 ## Server compatibility

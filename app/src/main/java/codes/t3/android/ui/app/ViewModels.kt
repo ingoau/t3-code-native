@@ -73,6 +73,7 @@ fun threadActionOp(commands: codes.t3.android.data.ProtocolCommands, threadId: S
     ThreadAction.Unpin -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Unpin)
     ThreadAction.Settle -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Settle)
     ThreadAction.Unsettle -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Unsettle)
+    ThreadAction.Unsnooze -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Unsnooze)
     ThreadAction.Archive -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Archive)
     ThreadAction.Delete -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Delete)
     ThreadAction.MarkUnread -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.MarkUnread)
@@ -80,7 +81,7 @@ fun threadActionOp(commands: codes.t3.android.data.ProtocolCommands, threadId: S
 }
 
 private fun actionVerb(action: ThreadAction) = when (action) {
-    ThreadAction.Pin -> "pin"; ThreadAction.Unpin -> "unpin"; ThreadAction.Settle -> "settle"; ThreadAction.Unsettle -> "un-settle"
+    ThreadAction.Pin -> "pin"; ThreadAction.Unpin -> "unpin"; ThreadAction.Settle -> "settle"; ThreadAction.Unsettle -> "un-settle"; ThreadAction.Unsnooze -> "wake"
     ThreadAction.Archive -> "archive"; ThreadAction.Delete -> "delete"; ThreadAction.MarkUnread -> "mark"; is ThreadAction.Rename -> "rename"
 }
 
@@ -231,6 +232,15 @@ class ThreadViewModel(
             !s.composer.running || runId == null -> Commands.DispatchMode.StartImmediately
             mode == SendMode.Steer -> Commands.DispatchMode.Steer(runId)
             else -> Commands.DispatchMode.Queue
+        }
+        // Like the web app, replying to a settled or snoozed thread brings it back to Active.
+        repository.connection(environmentId)?.let { conn ->
+            val shell = s.shell
+            val reopen = listOfNotNull(
+                codes.t3.android.data.ThreadOp.Unsettle.takeIf { shell?.isSettled == true },
+                codes.t3.android.data.ThreadOp.Unsnooze.takeIf { shell?.isSnoozed == true },
+            )
+            reopen.forEach { op -> conn.commands.housekeeping(threadId, op)?.let { viewModelScope.launch { runCatching { conn.run(it) } } } }
         }
         val taken = tray.takeItems()
         val attachments = JsonArray(taken.mapNotNull { it.ref })

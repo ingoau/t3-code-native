@@ -14,7 +14,7 @@ import java.time.Instant
 data class Op(val method: String, val payload: JsonObject)
 
 /** Housekeeping actions that exist in both protocols (some are v2-only). */
-enum class ThreadOp { Pin, Unpin, Settle, Unsettle, Archive, Unarchive, Delete, MarkUnread }
+enum class ThreadOp { Pin, Unpin, Settle, Unsettle, Unsnooze, Archive, Unarchive, Delete, MarkUnread }
 
 /** Builds the right command shapes for the server's orchestration protocol. */
 interface ProtocolCommands {
@@ -63,6 +63,7 @@ class V2Commands(private val serverResolvesContext: Boolean) : ProtocolCommands 
             ThreadOp.Unpin -> Commands.simple("thread.unpin", threadId)
             ThreadOp.Settle -> Commands.simple("thread.settle", threadId)
             ThreadOp.Unsettle -> Commands.unsettle(threadId)
+            ThreadOp.Unsnooze -> Commands.unsnooze(threadId)
             ThreadOp.Archive -> Commands.simple("thread.archive", threadId)
             ThreadOp.Unarchive -> Commands.simple("thread.unarchive", threadId)
             ThreadOp.Delete -> Commands.simple("thread.delete", threadId)
@@ -152,6 +153,7 @@ object V1Commands : ProtocolCommands {
         ThreadOp.Unpin -> cmd("thread.unpin", threadId, withTime = false)
         ThreadOp.Settle -> cmd("thread.settle", threadId, withTime = false)
         ThreadOp.Unsettle -> cmd("thread.unsettle", threadId, withTime = false) { put("reason", "user") }
+        ThreadOp.Unsnooze -> cmd("thread.unsnooze", threadId, withTime = false) { put("reason", "user") }
         ThreadOp.Archive -> cmd("thread.archive", threadId, withTime = false)
         ThreadOp.Unarchive -> cmd("thread.unarchive", threadId, withTime = false)
         ThreadOp.Delete -> cmd("thread.delete", threadId, withTime = false)

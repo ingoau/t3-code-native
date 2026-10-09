@@ -1,10 +1,15 @@
 package codes.t3.android.ui.app
 
 import androidx.compose.animation.core.tween
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.background
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Box
@@ -74,14 +79,20 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    // Opaque backdrop so cross-fading pages never reveal the window background.
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer)) {
         NavHost(
             navController = nav,
             startDestination = HomeRoute,
-            enterTransition = { slideInHorizontally(tween(320)) { it / 4 } + fadeIn(tween(220)) },
-            exitTransition = { scaleOut(tween(320), targetScale = 0.94f) + fadeOut(tween(200)) },
-            popEnterTransition = { scaleIn(tween(320), initialScale = 0.94f) + fadeIn(tween(220)) },
-            popExitTransition = { slideOutHorizontally(tween(320)) { it / 4 } + fadeOut(tween(200)) },
+            enterTransition = { SharedAxis.enter },
+            exitTransition = { SharedAxis.exit },
+            // Back (and predictive back, which scrubs these with the gesture) is the forward motion in reverse.
+            popEnterTransition = { SharedAxis.popEnter },
+            popExitTransition = { SharedAxis.popExit },
+            // NavHost uses separate transitions while a predictive back gesture is in progress; use the same reverse
+            // shared-axis motion so the gesture scrubs exactly what tapping back would play.
+            predictivePopEnterTransition = { SharedAxis.popEnter },
+            predictivePopExitTransition = { SharedAxis.popExit },
         ) {
             composable<HomeRoute> {
                 val state by app.home.collectAsStateWithLifecycle()
@@ -275,4 +286,25 @@ private fun ArchiveRoute(app: AppViewModel, nav: NavHostController) {
             }
         },
     )
+}
+
+/**
+ * Material shared-axis X, as used by the Android Settings app: the incoming page slides 10% in from the trailing
+ * edge while fading in; the outgoing page slides 10% toward the leading edge while fading out. Popping is the exact
+ * reverse, so a predictive back gesture literally plays the forward transition backwards.
+ */
+internal object SharedAxis {
+    private const val DURATION = 450
+    private val emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+    private fun slide() = tween<IntOffset>(DURATION, easing = emphasized)
+    private const val SHIFT = 0.1f
+
+    val enter: EnterTransition = slideInHorizontally(slide()) { (it * SHIFT).toInt() } +
+        fadeIn(tween(150, delayMillis = 50, easing = LinearEasing))
+    val exit: ExitTransition = slideOutHorizontally(slide()) { -(it * SHIFT).toInt() } +
+        fadeOut(tween(150, delayMillis = 35, easing = LinearEasing))
+    val popEnter: EnterTransition = slideInHorizontally(slide()) { -(it * SHIFT).toInt() } +
+        fadeIn(tween(150, delayMillis = 50, easing = LinearEasing))
+    val popExit: ExitTransition = slideOutHorizontally(slide()) { (it * SHIFT).toInt() } +
+        fadeOut(tween(150, delayMillis = 35, easing = LinearEasing))
 }

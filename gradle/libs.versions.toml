@@ -11,8 +11,7 @@ coroutines = "1.11.0"
 serialization = "1.11.0"
 okhttp = "5.3.2"
 datastore = "1.2.1"
-camera = "1.6.2"
-mlkitBarcode = "17.3.0"
+codeScanner = "16.1.0"
 markdown = "0.45.0"
 junit = "4.13.2"
 robolectric = "4.17"
@@ -30,10 +29,7 @@ androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-
 androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "lifecycle" }
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
-androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camera" }
-androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camera" }
-androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "camera" }
-mlkit-barcode = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkitBarcode" }
+gms-code-scanner = { module = "com.google.android.gms:play-services-code-scanner", version.ref = "codeScanner" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
