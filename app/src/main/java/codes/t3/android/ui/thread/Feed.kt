@@ -100,7 +100,8 @@ fun buildFeed(timeline: List<TurnItem>, runs: Map<String, Run>, activeRunId: Str
         }
         if (live || runId == null) {
             out += flatten(rest, live, runId ?: rest.first().id, finalAssistantId = null)
-            if (live && rest.none { it.isRunning }) out += FeedEntry.Thinking
+            // "Thinking" fills the gap while nothing is visibly running, but not right after a finished answer.
+            if (live && rest.none { it.isRunning } && rest.last().type != "assistant_message") out += FeedEntry.Thinking
         } else {
             val finalAssistant = rest.lastOrNull { it.type == "assistant_message" }
             val folded = rest.filter { it.id != finalAssistant?.id && it.type !in ProminentTypes }

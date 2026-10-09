@@ -191,7 +191,7 @@ fun AssistantMessage(item: TurnItem, final: Boolean, wrapCode: Boolean, modifier
 // ------------------------------------------------------------------ work log
 
 fun workIcon(item: TurnItem): ImageVector = when (item.type) {
-    "command_execution" -> Icons.Rounded.Terminal
+    "command_execution" -> if (item.isWorkspacePrep()) Icons.Rounded.CheckCircle else Icons.Rounded.Terminal
     "file_change" -> Icons.Rounded.EditNote
     "file_search" -> Icons.Rounded.Search
     "web_search" -> Icons.Rounded.Language
@@ -204,7 +204,15 @@ fun workIcon(item: TurnItem): ImageVector = when (item.type) {
     else -> Icons.Rounded.Build
 }
 
-fun workLabel(item: TurnItem): String = when (item.type) {
+/** Server-synthesized workspace setup step, sent as a command item ("Preparing workspace" / "Workspace ready"). */
+fun TurnItem.isWorkspacePrep(): Boolean = id.contains("workspace-preparation")
+
+fun workLabel(item: TurnItem): String = when {
+    item.isWorkspacePrep() -> item.title ?: item.commandInput ?: "Workspace"
+    else -> workLabelByType(item)
+}
+
+private fun workLabelByType(item: TurnItem): String = when (item.type) {
     "command_execution" -> item.commandInput?.lineSequence()?.firstOrNull()?.trim().orEmpty().ifEmpty { "Ran a command" }
     "file_change" -> {
         val name = item.fileName?.substringAfterLast('/') ?: item.title ?: "files"
@@ -222,7 +230,7 @@ fun workLabel(item: TurnItem): String = when (item.type) {
     else -> item.title ?: item.type.replace('_', ' ')
 }
 
-private fun liveLabel(item: TurnItem): String = when (item.type) {
+private fun liveLabel(item: TurnItem): String = if (item.isWorkspacePrep()) item.commandInput ?: "Preparing workspace" else when (item.type) {
     "command_execution" -> "Running " + (item.commandInput?.trim()?.substringBefore(' ')?.substringAfterLast('/') ?: "command")
     "file_change" -> "Editing " + (item.fileName?.substringAfterLast('/') ?: "files")
     "file_search" -> "Searching code"
@@ -288,7 +296,7 @@ fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
     }
     val shown = full ?: item
     val failed = item.isFailed && item.status != "running"
-    val hasDetail = detailText(shown) != null
+    val hasDetail = !item.isWorkspacePrep() && detailText(shown) != null
     Column(Modifier.fillMaxWidth().animateContentSize()) {
         Row(
             Modifier
@@ -307,7 +315,7 @@ fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
             )
             Spacer(Modifier.width(10.dp))
             val label = if (item.isRunning) liveLabel(item) else workLabel(item)
-            val mono = item.type == "command_execution"
+            val mono = item.type == "command_execution" && !item.isWorkspacePrep()
             if (item.isRunning) {
                 ShimmerText(label, (if (mono) MonoStyle else MaterialTheme.typography.bodyMedium), MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f))
             } else {
@@ -579,7 +587,7 @@ fun NoticeRow(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun ThinkingRow(modifier: Modifier = Modifier) {
-    Row(modifier.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
         LoadingIndicator(Modifier.size(24.dp))
         Spacer(Modifier.width(8.dp))
         ShimmerText("Thinking", MaterialTheme.typography.bodyMedium, MaterialTheme.colorScheme.onSurfaceVariant)

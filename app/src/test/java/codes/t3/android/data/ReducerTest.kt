@@ -84,3 +84,18 @@ class ReducerTest {
         assertEquals(2, q.questions.single().options.size)
     }
 }
+
+/** Parses a real thread projection captured from a t3 0.0.46-preview server after one Claude turn. */
+class LiveFixtureTest {
+    @org.junit.Test fun parsesRealProjection() {
+        val raw = javaClass.classLoader!!.getResource("live-thread-v2.json")!!.readText()
+        val obj = T3Json.parseToJsonElement(raw) as kotlinx.serialization.json.JsonObject
+        val seq = (obj["snapshotSequence"] as kotlinx.serialization.json.JsonPrimitive).content.toLong()
+        val state = ThreadState().apply(T3Json.parseToJsonElement("""{"kind":"snapshot","snapshotSequence":$seq,"projection":${obj["projection"]}}"""))
+        assertEquals(listOf("user_message", "command_execution", "assistant_message", "checkpoint"), state.timeline.map { it.type })
+        assertEquals("pong", state.timeline[2].text.trim().lowercase())
+        assertNull(state.activeRun)
+        val feed = codes.t3.android.ui.thread.buildFeed(state.timeline, state.runs, null)
+        assertTrue(feed.last() is codes.t3.android.ui.thread.FeedEntry.Assistant)
+    }
+}
