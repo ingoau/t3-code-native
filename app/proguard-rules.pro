@@ -1,0 +1,6 @@
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.**
+-keepclassmembers class kotlinx.serialization.json.** { *** Companion; }
+-keepclasseswithmembers class codes.t3.android.** { kotlinx.serialization.KSerializer serializer(...); }
+-keep,includedescriptorclasses class codes.t3.android.**$$serializer { *; }
+-dontwarn org.slf4j.**
