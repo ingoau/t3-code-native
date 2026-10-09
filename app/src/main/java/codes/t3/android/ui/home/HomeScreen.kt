@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -252,7 +254,8 @@ fun HomeScreen(
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(top = 8.dp, bottom = 112.dp + padding.calculateBottomPadding()),
-                    modifier = Modifier.fillMaxSize(),
+                    // Keep rows readable on tablets/foldables.
+                    modifier = Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 840.dp),
                 ) {
                     val projectOptions = state.projects.distinctBy { it.project.id }
                     if (projectOptions.size > 1) {
