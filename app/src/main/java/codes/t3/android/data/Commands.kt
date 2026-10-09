@@ -40,6 +40,7 @@ object Commands {
         mode: DispatchMode,
         serverResolvesContext: Boolean,
         attachments: JsonArray = JsonArray(emptyList()),
+        sourcePlan: Pair<String, String>? = null,
     ) = buildJsonObject {
         put("type", "message.dispatch")
         put("commandId", newId())
@@ -50,6 +51,7 @@ object Commands {
         put("text", text)
         put("attachments", attachments)
         modelSelection?.let { put("modelSelection", modelSelectionJson(it)) }
+        sourcePlan?.let { (tid, planId) -> put("sourcePlanRef", buildJsonObject { put("threadId", tid); put("planId", planId) }) }
         when (mode) {
             DispatchMode.StartImmediately -> {
                 if (serverResolvesContext) put("deliveryIntent", "auto")
