@@ -12,6 +12,14 @@ val copyRobolectricRuntime = tasks.register<Copy>("copyRobolectricRuntime") {
     into(robolectricRuntimeDir)
 }
 
+// Release versioning comes from the git tag in CI (v1.2.3 → versionName 1.2.3, versionCode 10203xx).
+// versionCode must strictly increase between releases for Android to install an update over the old app.
+val releaseVersionName: String? = System.getenv("RELEASE_VERSION_NAME")?.takeIf { it.isNotBlank() }
+val releaseVersionCode: Int? = System.getenv("RELEASE_VERSION_CODE")?.toIntOrNull()
+
+// Release signing from CI secrets (see README). Without them, release builds fall back to the debug key.
+val releaseKeystore: String? = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() && file(it).exists() }
+
 android {
     namespace = "codes.t3.android"
     compileSdk = 37
@@ -20,10 +28,21 @@ android {
         applicationId = "codes.t3.android"
         minSdk = 29
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = releaseVersionCode ?: 1
+        versionName = releaseVersionName ?: "0.1.0"
         // 32-bit x86 is effectively emulator-only and doubles the size of ML Kit's native QR decoder.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -31,8 +50,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Debug-signed so the release APK installs out of the box; swap in a real keystore for distribution.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

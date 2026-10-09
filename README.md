@@ -81,8 +81,51 @@ You need JDK 21 and an Android SDK with platform 37.
 
 ```bash
 ./gradlew :app:assembleDebug     # app/build/outputs/apk/debug/app-debug.apk
-./gradlew :app:assembleRelease   # minified; signed with the debug key so it installs out of the box
+./gradlew :app:assembleRelease   # minified; uses your release key if ANDROID_KEYSTORE_* is set, else the debug key
 ```
+
+## Releases
+
+Pushing a tag such as `v0.2.0` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). The workflow:
+
+1. Runs the unit tests.
+2. Builds a minified release APK signed with your key.
+3. Verifies that it isn't debug-signed.
+4. Publishes it to a GitHub release, with a SHA-256 file and auto-generated release notes.
+
+The tag sets the version: `vMAJOR.MINOR.PATCH` gives versionCode `MAJOR*1_000_000 + MINOR*10_000 + PATCH*100 + 99`.
+A pre-release tag such as `v0.3.0-beta.2` ends in its number (`…02`) instead of `99` and is marked as a pre-release.
+Android only installs an update over an existing app if the new APK has the **same package name, the same signing
+key and a higher versionCode**. Always tag increasing versions, and never lose the keystore.
+
+### One-time setup: signing key and secrets
+
+```bash
+# 1. Create a release keystore (keep it, and its password, somewhere safe. If you lose it, users must uninstall
+#    to get a newer build).
+keytool -genkeypair -v \
+  -keystore t3code-release.jks -alias t3code \
+  -keyalg RSA -keysize 4096 -validity 36500 \
+  -dname "CN=T3 Code Android"
+#    (prompts for a keystore password; when asked for a key password, press Enter to reuse it)
+
+# 2. Add it to the repo as Actions secrets (GitHub CLI; run from the repo checkout)
+base64 < t3code-release.jks | tr -d '\n' | gh secret set ANDROID_KEYSTORE_BASE64
+gh secret set ANDROID_KEYSTORE_PASSWORD   # paste the keystore password
+gh secret set ANDROID_KEY_ALIAS --body t3code
+gh secret set ANDROID_KEY_PASSWORD        # same as the keystore password unless you set a separate one
+
+# 3. Cut a release
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Without `gh`, add the same four secrets under *Settings → Secrets and variables → Actions*. Generate the base64 value
+with `base64 -w0 t3code-release.jks` (Linux) or `base64 -i t3code-release.jks` (macOS).
+
+A debug or locally built APK is signed with a different key. Uninstall it once before installing the first release;
+after that, every release updates in place. To build a signed release locally, export the same variables
+(`ANDROID_KEYSTORE_PATH=/path/to/t3code-release.jks`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+`ANDROID_KEY_PASSWORD`) and run `./gradlew :app:assembleRelease`.
 
 ## Tests
 
