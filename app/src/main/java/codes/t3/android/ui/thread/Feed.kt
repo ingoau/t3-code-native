@@ -92,17 +92,19 @@ fun buildFeed(timeline: List<TurnItem>, runs: Map<String, Run>, activeRunId: Str
     for ((runId, items) in segments) {
         val run = runId?.let { runs[it] }
         val live = runId != null && (runId == activeRunId || run?.status in setOf("preparing", "starting", "running", "waiting"))
+        // A run that's waiting on the user (approval/question) isn't "thinking".
+        val waitingOnUser = run?.status == "waiting" || items.any { (it.type == "approval_request" || it.type == "user_input_request") && it.isRunning }
         val users = items.filter { it.type == "user_message" }
         users.forEach { out += FeedEntry.User(it) }
         val rest = items.filter { it.type != "user_message" }
         if (rest.isEmpty()) {
-            if (live) thinking = true
+            if (live && !waitingOnUser) thinking = true
             continue
         }
         if (live || runId == null) {
             out += flatten(rest, live, runId ?: rest.first().id, finalAssistantId = null)
             // "Thinking" fills the gap while nothing is visibly running, but not right after a finished answer.
-            if (live && rest.none { it.isRunning } && rest.last().type != "assistant_message") thinking = true
+            if (live && !waitingOnUser && rest.none { it.isRunning } && rest.last().type != "assistant_message") thinking = true
         } else {
             val finalAssistant = rest.lastOrNull { it.type == "assistant_message" }
             val folded = rest.filter { it.id != finalAssistant?.id && it.type !in ProminentTypes }

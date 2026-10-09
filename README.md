@@ -156,7 +156,7 @@ after that, every release updates in place. To build a signed release locally, e
   T3_PAIRING_URL="http://127.0.0.1:3773/pair#token=XXXXXXXXXXXX" ./gradlew :app:testDebugUnitTest --tests '*Live*'
   ```
 
-Screenshots of the app running against live servers are in `docs/screenshots/live/v1` and `docs/screenshots/live/v2`.
+Screenshots of the app running against live servers are in `docs/screenshots/live/v1` and `docs/screenshots/live/v2`; `docs/screenshots/overview.png` is a contact sheet.
 
 ## Architecture
 
