@@ -78,6 +78,15 @@ class EnvironmentConnection(
     private val _shell = MutableStateFlow(ShellState())
     val shell: StateFlow<ShellState> = _shell.asStateFlow()
 
+    /** Orchestration protocol spoken by the server, learned from its descriptor on each connect. */
+    @Volatile var protocol: Int = ORCHESTRATION_PROTOCOL
+        private set
+
+    /** Command builders matching [protocol]. */
+    val commands: ProtocolCommands
+        get() = if (protocol == 1) V1Commands
+        else V2Commands(_config.value?.environment?.capability("serverResolvedCommandContext") == true)
+
     /** The RPC session once it is ready (config snapshot received), else null. */
     private val session = MutableStateFlow<RpcClient?>(null)
 
@@ -164,6 +173,13 @@ class EnvironmentConnection(
         if (descriptor.environmentId != env.environmentId) {
             throw ServerApiException("A different T3 Code server now answers at ${env.displayHost}.", blocked = true)
         }
+        val serverProtocol = descriptor.orchestrationProtocolVersion ?: 1
+        if (serverProtocol != protocol || _shell.value.protocol != serverProtocol) {
+            // Server was upgraded/downgraded: drop cached state from the other protocol.
+            protocol = serverProtocol
+            _shell.value = ShellState(protocol = serverProtocol)
+            threadCache.clear()
+        }
         val ticket = api.webSocketTicket(env.httpBaseUrl, accessToken)
         val url = env.httpBaseUrl.trimEnd('/') + "/ws"
         val wsUrl = url.toHttpUrl().newBuilder()
@@ -175,7 +191,7 @@ class EnvironmentConnection(
             .addQueryParameter("clientOsMajorVersion", Build.VERSION.RELEASE?.substringBefore('.') ?: "0")
             .addQueryParameter("clientDeviceModel", (Build.MODEL ?: "Android").take(80))
             .addQueryParameter("connectionMethod", "direct")
-            .addQueryParameter("orchestrationProtocol", ORCHESTRATION_PROTOCOL.toString())
+            .addQueryParameter("orchestrationProtocol", serverProtocol.toString())
             .build()
             .toString()
             .replaceFirst("http", "ws")
@@ -268,7 +284,44 @@ class EnvironmentConnection(
     }
 
     /** Live thread detail. Survives reconnects by resubscribing with `afterSequence`. */
-    fun observeThread(threadId: String): Flow<ThreadState> = channelFlow {
+    fun observeThread(threadId: String): Flow<ThreadState> = if (protocol == 1) observeThreadV1(threadId) else observeThreadV2(threadId)
+
+    private fun observeThreadV1(threadId: String): Flow<ThreadState> = channelFlow {
+        val state = MutableStateFlow(codes.t3.android.data.v1.V1ThreadState())
+        launch {
+            session.collectLatest { rpc ->
+                if (rpc == null) return@collectLatest
+                var backoff = 250L
+                while (true) {
+                    try {
+                        val payload = buildJsonObject {
+                            put("threadId", threadId)
+                            val seq = state.value.sequence
+                            if (seq >= 0) put("afterSequence", seq)
+                            if (_config.value?.threadResumeCompletionMarker == true) put("requestCompletionMarker", true)
+                            put("reasoningMessages", true)
+                        }
+                        rpc.stream("orchestration.subscribeThread", payload).collect { item ->
+                            state.update { it.apply(item).copy(error = null) }
+                            backoff = 250L
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: RpcException) {
+                        if (rpc.state.value != RpcClient.State.Open) return@collectLatest
+                        // A brand-new thread may not exist yet ("not found"): keep retrying quietly.
+                        if (state.value.thread != null) state.update { it.copy(error = e.message) }
+                        if (e.tag == "EnvironmentAuthorizationError") return@collectLatest
+                    }
+                    delay(backoff)
+                    backoff = min(backoff * 2, 5_000)
+                }
+            }
+        }
+        state.collect { send(it.toThreadState()) }
+    }
+
+    private fun observeThreadV2(threadId: String): Flow<ThreadState> = channelFlow {
         val state = MutableStateFlow(threadCache[threadId] ?: ThreadState())
         launch {
             session.collectLatest { rpc ->
@@ -312,4 +365,6 @@ class EnvironmentConnection(
     }
 
     suspend fun dispatch(command: JsonObject): JsonElement = call("orchestration.dispatchCommand", command)
+
+    suspend fun run(op: Op): JsonElement = call(op.method, op.payload)
 }

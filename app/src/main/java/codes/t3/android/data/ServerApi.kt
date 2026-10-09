@@ -17,7 +17,9 @@ import java.io.IOException
 /** Thrown for HTTP-level failures. [blocked] errors (auth, incompatible server) should not be retried automatically. */
 class ServerApiException(message: String, val status: Int = 0, val blocked: Boolean = false) : IOException(message)
 
+/** Newest orchestration protocol this client speaks; v1 (t3 ≤ 0.0.45) is supported through an adapter. */
 const val ORCHESTRATION_PROTOCOL = 2
+val SUPPORTED_PROTOCOLS = 1..2
 
 @Serializable
 data class AccessTokenResult(val access_token: String, val expires_in: Long? = null, val scope: String? = null)
@@ -33,9 +35,9 @@ class ServerApi(private val http: OkHttpClient) {
         val body = execute(request)
         val descriptor = T3Json.decodeFromString<EnvironmentDescriptor>(body)
         val version = descriptor.orchestrationProtocolVersion ?: 1
-        if (version != ORCHESTRATION_PROTOCOL) {
+        if (version !in SUPPORTED_PROTOCOLS) {
             throw ServerApiException(
-                if (version < ORCHESTRATION_PROTOCOL) "This T3 Code server is too old. Update T3 Code on the host."
+                if (version < SUPPORTED_PROTOCOLS.first) "This T3 Code server is too old. Update T3 Code on the host."
                 else "This server needs a newer version of the app.",
                 blocked = true,
             )

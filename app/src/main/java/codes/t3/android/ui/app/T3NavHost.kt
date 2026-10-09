@@ -249,7 +249,9 @@ private fun ArchiveRoute(app: AppViewModel, nav: NavHostController) {
         app.repository.connections.value.values.forEach { conn ->
             runCatching {
                 val snap = conn.call("orchestration.getArchivedShellSnapshot") as JsonObject
-                val list = T3Json.decodeFromJsonElement<List<ThreadShell>>(snap["threads"] as JsonArray)
+                val rows = snap["threads"] as JsonArray
+                val list = if (conn.protocol == 1) rows.mapNotNull { it as? JsonObject }.map { codes.t3.android.data.v1.V1.threadShell(it) }
+                else T3Json.decodeFromJsonElement<List<ThreadShell>>(rows)
                 val projects = conn.shell.value.projects
                 list.filter { it.deletedAt == null }.forEach { all += ThreadEntry(conn.environmentId, conn.environment.label, it, projects[it.projectId]) }
             }
@@ -261,13 +263,13 @@ private fun ArchiveRoute(app: AppViewModel, nav: NavHostController) {
         onBack = { nav.popBackStack() },
         onUnarchive = { t ->
             scope.launch {
-                runCatching { app.repository.connection(t.environmentId)?.dispatch(Commands.simple("thread.unarchive", t.thread.id)) }
+                runCatching { app.repository.connection(t.environmentId)?.let { c -> c.commands.housekeeping(t.thread.id, codes.t3.android.data.ThreadOp.Unarchive)?.let { c.run(it) } } }
                 reload++
             }
         },
         onDelete = { t ->
             scope.launch {
-                runCatching { app.repository.connection(t.environmentId)?.dispatch(Commands.simple("thread.delete", t.thread.id)) }
+                runCatching { app.repository.connection(t.environmentId)?.let { c -> c.commands.housekeeping(t.thread.id, codes.t3.android.data.ThreadOp.Delete)?.let { c.run(it) } } }
                 reload++
             }
         },

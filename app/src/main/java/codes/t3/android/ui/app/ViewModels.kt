@@ -67,15 +67,15 @@ fun errorText(e: Throwable): String = when (e) {
     else -> e.message ?: e::class.java.simpleName
 }
 
-fun threadActionCommand(threadId: String, action: ThreadAction): JsonObject = when (action) {
-    ThreadAction.Pin -> Commands.pin(threadId)
-    ThreadAction.Unpin -> Commands.simple("thread.unpin", threadId)
-    ThreadAction.Settle -> Commands.simple("thread.settle", threadId)
-    ThreadAction.Unsettle -> Commands.unsettle(threadId)
-    ThreadAction.Archive -> Commands.simple("thread.archive", threadId)
-    ThreadAction.Delete -> Commands.simple("thread.delete", threadId)
-    ThreadAction.MarkUnread -> Commands.simple("thread.mark-unread", threadId)
-    is ThreadAction.Rename -> Commands.rename(threadId, action.title)
+fun threadActionOp(commands: codes.t3.android.data.ProtocolCommands, threadId: String, action: ThreadAction): codes.t3.android.data.Op? = when (action) {
+    ThreadAction.Pin -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Pin)
+    ThreadAction.Unpin -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Unpin)
+    ThreadAction.Settle -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Settle)
+    ThreadAction.Unsettle -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Unsettle)
+    ThreadAction.Archive -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Archive)
+    ThreadAction.Delete -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Delete)
+    ThreadAction.MarkUnread -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.MarkUnread)
+    is ThreadAction.Rename -> commands.rename(threadId, action.title)
 }
 
 private fun actionVerb(action: ThreadAction) = when (action) {
@@ -116,8 +116,9 @@ class AppViewModel(val repository: T3Repository, private val settingsRepo: AppSe
 
     fun runThreadAction(environmentId: String, threadId: String, action: ThreadAction) {
         val conn = repository.connection(environmentId) ?: return UiEvents.show("Environment is not connected")
+        val op = threadActionOp(conn.commands, threadId, action) ?: return UiEvents.show("This server doesn't support that yet. Update T3 Code on the host.")
         viewModelScope.launch {
-            runCatching { conn.dispatch(threadActionCommand(threadId, action)) }
+            runCatching { conn.run(op) }
                 .onFailure { UiEvents.show("Could not ${actionVerb(action)} thread: ${errorText(it)}") }
         }
     }
@@ -198,20 +199,19 @@ class ThreadViewModel(
         return codes.t3.android.data.Attachments.download(conn, repository.http, attachment)?.asImageBitmap()
     }
 
-    private val serverResolves: Boolean
-        get() = repository.connection(environmentId)?.config?.value?.environment?.capability("serverResolvedCommandContext") == true
-
-    private fun dispatch(what: String, command: JsonObject) {
+    private fun run(what: String, build: (codes.t3.android.data.ProtocolCommands) -> codes.t3.android.data.Op?) {
         val conn = repository.connection(environmentId) ?: return UiEvents.show("Environment is not connected")
+        val op = build(conn.commands) ?: return UiEvents.show("This server doesn't support that yet. Update T3 Code on the host.")
         viewModelScope.launch {
-            runCatching { conn.dispatch(command) }.onFailure { UiEvents.show("Could not $what: ${errorText(it)}") }
+            runCatching { conn.run(op) }.onFailure { UiEvents.show("Could not $what: ${errorText(it)}") }
         }
     }
 
     fun markVisited() {
-        val at = repository.connection(environmentId)?.shell?.value?.threads?.get(threadId)?.updatedAt
         val conn = repository.connection(environmentId) ?: return
-        viewModelScope.launch { runCatching { conn.dispatch(Commands.visit(threadId, at)) } }
+        val at = conn.shell.value.threads[threadId]?.updatedAt
+        val op = conn.commands.visit(threadId, at) ?: return
+        viewModelScope.launch { runCatching { conn.run(op) } }
     }
 
     fun send(text: String, mode: SendMode, sourcePlan: Pair<String, String>? = null) {
@@ -219,8 +219,8 @@ class ThreadViewModel(
         if (text.isBlank() && s.attachments.none { it.ref != null }) return
         if (!tray.ready) return UiEvents.show("Wait for images to finish uploading")
         when (text.trim().lowercase()) {
-            "/plan" -> return dispatch("switch to plan mode", Commands.setInteractionMode(threadId, "plan"))
-            "/default", "/build" -> return dispatch("switch to default mode", Commands.setInteractionMode(threadId, "default"))
+            "/plan" -> return run("switch to plan mode") { it.setInteractionMode(threadId, "plan") }
+            "/default", "/build" -> return run("switch to default mode") { it.setInteractionMode(threadId, "default") }
         }
         val runId = s.shell?.activeRunId ?: s.detail.activeRun?.id
         val dispatchMode = when {
@@ -228,49 +228,48 @@ class ThreadViewModel(
             mode == SendMode.Steer -> Commands.DispatchMode.Steer(runId)
             else -> Commands.DispatchMode.Queue
         }
-        dispatch("send message", Commands.sendMessage(threadId, text, s.composer.selection, dispatchMode, serverResolves, attachments = tray.take(), sourcePlan = sourcePlan))
+        val attachments = tray.take()
+        val interaction = if (sourcePlan != null) "default" else if (s.composer.planMode) "plan" else "default"
+        run("send message") { it.send(threadId, text, s.composer.selection, dispatchMode, attachments, sourcePlan, s.composer.runtimeMode.wire, interaction) }
     }
 
     fun stop() {
         val s = state.value ?: return
         val runId = s.shell?.activeRunId ?: s.detail.activeRun?.id ?: return
-        dispatch("stop the agent", Commands.interrupt(threadId, runId))
+        run("stop the agent") { it.interrupt(threadId, runId) }
     }
 
-    fun cancelQueued(runId: String) = dispatch("remove queued message", Commands.cancelQueued(threadId, runId))
+    fun cancelQueued(runId: String) = run("remove queued message") { it.cancelQueued(threadId, runId) }
     fun steerQueued(runId: String) {
         val target = state.value?.detail?.activeRun?.id ?: return
-        dispatch("steer", Commands.promoteToSteer(threadId, runId, target))
+        run("steer") { it.promoteToSteer(threadId, runId, target) }
     }
-    fun resumeQueue() = dispatch("resume queue", Commands.resumeQueue(threadId))
+    fun resumeQueue() = run("resume queue") { it.resumeQueue(threadId) }
 
-    fun respondApproval(requestId: String, decision: String) = dispatch("respond", Commands.respondApproval(threadId, requestId, decision))
+    fun respondApproval(requestId: String, decision: String) = run("respond") { it.respondApproval(threadId, requestId, decision) }
 
     fun answer(requestId: String, answers: Map<String, List<String>>, multi: Set<String>) =
-        dispatch("submit answers", Commands.respondAnswers(threadId, requestId, answers, multi))
+        run("submit answers") { it.respondAnswers(threadId, requestId, answers, multi) }
 
-    fun dismissQuestion(requestId: String) = dispatch("dismiss", Commands.dismissQuestion(threadId, requestId))
+    fun dismissQuestion(requestId: String) = run("dismiss") { it.dismissQuestion(threadId, requestId) }
 
     fun changeModel(selection: ModelSelection, runtime: RuntimeMode) {
         val s = state.value ?: return
         val current = s.composer.selection
-        if (selection != current) {
-            val switching = current != null && current.instanceId != selection.instanceId && !serverResolves
-            dispatch("change model", if (switching) Commands.switchProvider(threadId, selection) else Commands.setModel(threadId, selection))
-        }
+        if (selection != current) run("change model") { it.setModel(threadId, current, selection) }
         if (runtime != s.composer.runtimeMode) setRuntime(runtime)
     }
 
-    fun setRuntime(mode: RuntimeMode) = dispatch("change runtime mode", Commands.setRuntimeMode(threadId, mode.wire))
+    fun setRuntime(mode: RuntimeMode) = run("change runtime mode") { it.setRuntimeMode(threadId, mode.wire) }
 
     fun togglePlan() {
         val plan = state.value?.composer?.planMode ?: return
-        dispatch("switch mode", Commands.setInteractionMode(threadId, if (plan) "default" else "plan"))
+        run("switch mode") { it.setInteractionMode(threadId, if (plan) "default" else "plan") }
     }
 
     fun implementPlan(item: TurnItem) {
         val planId = item.str("planId") ?: return
-        if (state.value?.composer?.planMode == true) dispatch("switch mode", Commands.setInteractionMode(threadId, "default"))
+        if (state.value?.composer?.planMode == true) run("switch mode") { it.setInteractionMode(threadId, "default") }
         send("Implement the plan.", SendMode.Send, sourcePlan = threadId to planId)
     }
 
@@ -409,14 +408,7 @@ class NewThreadViewModel(
         val projectId = UUID.randomUUID().toString()
         viewModelScope.launch {
             runCatching {
-                conn.call("projects.mutate", buildJsonObject {
-                    put("type", "project.create")
-                    put("commandId", Commands.newId())
-                    put("projectId", projectId)
-                    put("title", title.ifBlank { path.trimEnd('/').substringAfterLast('/') })
-                    put("workspaceRoot", path)
-                    put("createWorkspaceRootIfMissing", true)
-                })
+                conn.run(conn.commands.createProject(projectId, title.ifBlank { path.trimEnd('/').substringAfterLast('/') }, path))
             }.onSuccess {
                 selectedKey.value = envId to projectId
                 branches.value = null
@@ -443,12 +435,10 @@ class NewThreadViewModel(
         error.value = null
         viewModelScope.launch {
             runCatching {
-                conn.call(
-                    "orchestration.launchThread",
-                    Commands.launchThread(
-                        threadId, selected.project.id, text, selection, s.composer.runtimeMode.wire,
-                        if (s.composer.planMode) "plan" else "default", workspaceStrategy,
-                        attachments = tray.take(),
+                conn.run(
+                    conn.commands.launch(
+                        threadId, selected.project.id, selected.project.workspaceRoot, text, selection, s.composer.runtimeMode.wire,
+                        if (s.composer.planMode) "plan" else "default", workspaceStrategy, tray.take(),
                     ),
                 )
             }.onSuccess { result ->
