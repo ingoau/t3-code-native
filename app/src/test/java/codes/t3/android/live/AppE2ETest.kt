@@ -45,7 +45,7 @@ class TestT3App : T3App() {
 class AppE2ETest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    private val dir = "../docs/screenshots/live"
+    private val dir = "../docs/screenshots/live" + (System.getenv("T3_E2E_TAG")?.let { "/$it" } ?: "")
 
     @Before fun noAnimations() {
         val resolver = ApplicationProvider.getApplicationContext<T3App>().contentResolver
@@ -79,16 +79,29 @@ class AppE2ETest {
         compose.mainClock.advanceTimeBy(1_000)
         captureScreenRoboImage("$dir/03_home_connected.png")
 
+        System.getenv("T3_E2E_OPEN_THREAD")?.let { title ->
+            compose.onAllNodesWithText(title).onFirst().performClick()
+            compose.waitUntil(20_000) { compose.onAllNodesWithText("Opening thread…").fetchSemanticsNodes().isEmpty() }
+            compose.mainClock.advanceTimeBy(1_500)
+            captureScreenRoboImage("$dir/03b_thread.png")
+            compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            compose.waitUntilAtLeastOneExists(hasContentDescription("Open settings"), 10_000)
+        }
+
         compose.onNodeWithContentDescription("Open settings").performClick()
         waitForText("Environments")
         compose.onAllNodesWithText("Environments").onFirst().performClick()
         waitForText("Connected")
         captureScreenRoboImage("$dir/04_environments_connected.png")
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        waitForText("Settings")
+        compose.mainClock.advanceTimeBy(600)
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
-
-        compose.waitUntilAtLeastOneExists(hasText("New thread"), 10_000)
-        compose.onAllNodesWithText("New thread").onFirst().performClick()
+        compose.waitUntilAtLeastOneExists(hasContentDescription("Open settings"), 10_000)
+        compose.mainClock.advanceTimeBy(600)
+        val newThread = hasText("New thread") or hasContentDescription("New thread")
+        compose.waitUntilAtLeastOneExists(newThread, 10_000)
+        compose.onAllNodes(newThread).onFirst().performClick()
         waitForText("What should the agent work on?")
         // Branches load from the real repository via vcs.listRefs.
         compose.waitUntil(15_000) { compose.onAllNodesWithText("Loading branches…").fetchSemanticsNodes().isEmpty() }

@@ -31,6 +31,7 @@ class V1AdapterTest {
             ),
             state.timeline.map { it.type },
         )
+        assertEquals(listOf("1", "done"), state.timeline.filter { it.type == "assistant_message" }.map { it.text })
         val ls = state.timeline[1]
         assertEquals("ls -1", ls.commandInput)
         assertEquals("README.md", ls.output)

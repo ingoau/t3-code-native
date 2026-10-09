@@ -100,6 +100,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import codes.t3.android.R
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.launch
 import codes.t3.android.data.ConnectionStatus
 import codes.t3.android.data.EnvironmentSnapshot
@@ -228,6 +230,7 @@ fun HomeScreen(
                 ExtendedFloatingActionButton(
                     onClick = onNewThread,
                     expanded = fabExpanded,
+                    modifier = Modifier.semantics { contentDescription = "New thread" },
                     icon = { Icon(painterResource(R.drawable.ic_compose), null) },
                     text = { Text("New thread") },
                 )

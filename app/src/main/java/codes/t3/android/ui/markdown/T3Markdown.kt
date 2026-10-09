@@ -69,8 +69,11 @@ fun T3Markdown(
     val type = MaterialTheme.typography
     val body = type.bodyLarge.copy(fontSize = 15.5.sp, lineHeight = 23.sp)
     val codeInline = MonoStyle.copy(fontSize = 13.5.sp)
+    // Short messages parse synchronously (no blank first frame); streaming updates keep showing the previous
+    // render while the new text parses, so the answer never flickers.
+    val state = com.mikepenz.markdown.model.rememberMarkdownState(text, retainState = true, immediate = text.length < 4_000)
     Markdown(
-        content = text,
+        markdownState = state,
         modifier = modifier,
         colors = markdownColor(
             text = textColor,
