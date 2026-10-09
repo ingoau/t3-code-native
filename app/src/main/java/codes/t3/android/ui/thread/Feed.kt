@@ -78,6 +78,7 @@ private fun foldLabel(run: Run?, items: List<TurnItem>): String {
 /** Turn the ordered timeline into feed entries. */
 fun buildFeed(timeline: List<TurnItem>, runs: Map<String, Run>, activeRunId: String?): List<FeedEntry> {
     val out = mutableListOf<FeedEntry>()
+    var thinking = false
     // Group contiguous items by run, preserving order.
     val segments = mutableListOf<Pair<String?, MutableList<TurnItem>>>()
     for (item in timeline) {
@@ -95,18 +96,18 @@ fun buildFeed(timeline: List<TurnItem>, runs: Map<String, Run>, activeRunId: Str
         users.forEach { out += FeedEntry.User(it) }
         val rest = items.filter { it.type != "user_message" }
         if (rest.isEmpty()) {
-            if (live) out += FeedEntry.Thinking
+            if (live) thinking = true
             continue
         }
         if (live || runId == null) {
             out += flatten(rest, live, runId ?: rest.first().id, finalAssistantId = null)
             // "Thinking" fills the gap while nothing is visibly running, but not right after a finished answer.
-            if (live && rest.none { it.isRunning } && rest.last().type != "assistant_message") out += FeedEntry.Thinking
+            if (live && rest.none { it.isRunning } && rest.last().type != "assistant_message") thinking = true
         } else {
             val finalAssistant = rest.lastOrNull { it.type == "assistant_message" }
             val folded = rest.filter { it.id != finalAssistant?.id && it.type !in ProminentTypes }
             if (folded.isNotEmpty() && folded.any { it.type in WorkTypes || it.type == "assistant_message" }) {
-                out += FeedEntry.Fold("f-$runId", foldLabel(run, items), flatten(folded, false, runId, null))
+                out += FeedEntry.Fold("f-$runId-${folded.first().id}", foldLabel(run, items), flatten(folded, false, runId, null))
             } else {
                 out += flatten(folded, false, runId, null)
             }
@@ -114,7 +115,9 @@ fun buildFeed(timeline: List<TurnItem>, runs: Map<String, Run>, activeRunId: Str
             finalAssistant?.let { out += FeedEntry.Assistant(it, final = true) }
         }
     }
-    return out
+    // At most one "Thinking" row, always at the end; keys must be unique for the lazy list.
+    if (thinking) out += FeedEntry.Thinking
+    return out.distinctBy { it.key }
 }
 
 private fun single(item: TurnItem): FeedEntry = when (item.type) {

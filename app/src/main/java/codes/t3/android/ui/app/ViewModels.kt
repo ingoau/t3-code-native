@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -148,7 +149,7 @@ class ThreadViewModel(
     val environmentId: String,
     val threadId: String,
 ) : ViewModel() {
-    private val connection: Flow<EnvironmentConnection?> = repository.connections.map { it[environmentId] }
+    private val connection: Flow<EnvironmentConnection?> = repository.connections.map { it[environmentId] }.distinctUntilChanged()
 
     private val detail: Flow<ThreadState> = connection.flatMapLatest { it?.observeThread(threadId) ?: flowOf(ThreadState(error = "Environment is not connected")) }
     private val shellEntry = connection.flatMapLatest { c -> c?.shell?.map { s -> s.threads[threadId] to s.projects } ?: flowOf(null to emptyMap()) }
@@ -189,7 +190,10 @@ class ThreadViewModel(
         )
     }
 
-    val state: StateFlow<ThreadUiState?> = combine(baseState, tray.items) { s, items -> s.copy(attachments = items) }
+    private val restoredDraft = MutableStateFlow<String?>(null)
+    fun draftRestored() { restoredDraft.value = null }
+
+    val state: StateFlow<ThreadUiState?> = combine(baseState, tray.items, restoredDraft) { s, items, draft -> s.copy(attachments = items, restoredDraft = draft) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun addImages(resolver: android.content.ContentResolver, uris: List<android.net.Uri>) = tray.add(environmentId, resolver, uris)
@@ -199,11 +203,11 @@ class ThreadViewModel(
         return codes.t3.android.data.Attachments.download(conn, repository.http, attachment)?.asImageBitmap()
     }
 
-    private fun run(what: String, build: (codes.t3.android.data.ProtocolCommands) -> codes.t3.android.data.Op?) {
-        val conn = repository.connection(environmentId) ?: return UiEvents.show("Environment is not connected")
-        val op = build(conn.commands) ?: return UiEvents.show("This server doesn't support that yet. Update T3 Code on the host.")
+    private fun run(what: String, onFailure: () -> Unit = {}, build: (codes.t3.android.data.ProtocolCommands) -> codes.t3.android.data.Op?) {
+        val conn = repository.connection(environmentId) ?: run { onFailure(); return UiEvents.show("Environment is not connected") }
+        val op = build(conn.commands) ?: run { onFailure(); return UiEvents.show("This server doesn't support that yet. Update T3 Code on the host.") }
         viewModelScope.launch {
-            runCatching { conn.run(op) }.onFailure { UiEvents.show("Could not $what: ${errorText(it)}") }
+            runCatching { conn.run(op) }.onFailure { onFailure(); UiEvents.show("Could not $what: ${errorText(it)}") }
         }
     }
 
@@ -228,9 +232,12 @@ class ThreadViewModel(
             mode == SendMode.Steer -> Commands.DispatchMode.Steer(runId)
             else -> Commands.DispatchMode.Queue
         }
-        val attachments = tray.take()
+        val taken = tray.takeItems()
+        val attachments = JsonArray(taken.mapNotNull { it.ref })
         val interaction = if (sourcePlan != null) "default" else if (s.composer.planMode) "plan" else "default"
-        run("send message") { it.send(threadId, text, s.composer.selection, dispatchMode, attachments, sourcePlan, s.composer.runtimeMode.wire, interaction) }
+        // On failure, put the text and images back so nothing the user wrote is lost.
+        val restore = { tray.restore(taken); if (sourcePlan == null) restoredDraft.value = text }
+        run("send message", restore) { it.send(threadId, text, s.composer.selection, dispatchMode, attachments, sourcePlan, s.composer.runtimeMode.wire, interaction) }
     }
 
     fun stop() {
@@ -280,7 +287,9 @@ class ThreadViewModel(
         return T3Json.decodeFromJsonElement<TurnItem>(item)
     }
 
-    fun reconnect() = repository.connection(environmentId)?.reconnectNow()
+    fun reconnect() {
+        repository.connection(environmentId)?.let { it.retryThreads(); it.reconnectNow() }
+    }
 }
 
 class NewThreadViewModel(
@@ -364,6 +373,8 @@ class NewThreadViewModel(
     }
 
     fun selectProject(entry: ProjectEntry) {
+        // Uploaded attachments live on one server; don't send their ids to another.
+        if (state.value?.selected?.environmentId != entry.environmentId) tray.clear()
         selectedKey.value = entry.environmentId to entry.project.id
         branch.value = null
         branches.value = null
@@ -433,12 +444,13 @@ class NewThreadViewModel(
         }
         starting.value = true
         error.value = null
+        val taken = tray.takeItems()
         viewModelScope.launch {
             runCatching {
                 conn.run(
                     conn.commands.launch(
                         threadId, selected.project.id, selected.project.workspaceRoot, text, selection, s.composer.runtimeMode.wire,
-                        if (s.composer.planMode) "plan" else "default", workspaceStrategy, tray.take(),
+                        if (s.composer.planMode) "plan" else "default", workspaceStrategy, JsonArray(taken.mapNotNull { it.ref }),
                     ),
                 )
             }.onSuccess { result ->
@@ -447,6 +459,7 @@ class NewThreadViewModel(
                 onStarted(selected.environmentId, id)
             }.onFailure {
                 starting.value = false
+                tray.restore(taken)
                 error.value = "Could not start task: ${errorText(it)}"
             }
         }

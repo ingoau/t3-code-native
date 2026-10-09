@@ -81,6 +81,20 @@ class V1AdapterTest {
         assertEquals(s, s.apply(event(103, "thread.message-sent", """{"threadId":"$tid","messageId":"a9","role":"assistant","text":"X","turnId":"t9","streaming":true}""")))
     }
 
+    @Test fun twoPendingMessagesDoNotProduceDuplicateFeedKeys() {
+        val tid = "392b738d-7379-4741-89fa-7927f6ade0c3"
+        var s = liveSnapshot()
+        fun event(seq: Int, type: String, payload: String) =
+            j("""{"kind":"event","event":{"sequence":$seq,"eventId":"e$seq","aggregateKind":"thread","aggregateId":"$tid","occurredAt":"2026-10-09T03:00:00.000Z","commandId":null,"causationEventId":null,"correlationId":null,"metadata":{},"type":"$type","payload":$payload}}""")
+        s = s.apply(event(201, "thread.session-set", """{"threadId":"$tid","session":{"threadId":"$tid","status":"starting","activeTurnId":null,"updatedAt":"2026-10-09T03:00:00.000Z"}}"""))
+        s = s.apply(event(202, "thread.message-sent", """{"threadId":"$tid","messageId":"p1","role":"user","text":"one","turnId":null,"streaming":false,"createdAt":"2026-10-09T03:00:01.000Z","updatedAt":"2026-10-09T03:00:01.000Z"}"""))
+        s = s.apply(event(203, "thread.message-sent", """{"threadId":"$tid","messageId":"p2","role":"user","text":"two","turnId":null,"streaming":false,"createdAt":"2026-10-09T03:00:02.000Z","updatedAt":"2026-10-09T03:00:02.000Z"}"""))
+        val view = s.toThreadState()
+        val feed = buildFeed(view.timeline, view.runs, view.activeRun?.id)
+        assertEquals(feed.size, feed.map { it.key }.toSet().size)
+        assertEquals(1, feed.count { it is FeedEntry.Thinking })
+    }
+
     @Test fun shellV1Items() {
         var s = ShellState(protocol = 1)
         val row = """{"id":"t1","projectId":"p1","title":"Count entries","modelSelection":{"instanceId":"claudeAgent","model":"claude-sonnet-5-5"},"runtimeMode":"approval-required","interactionMode":"default","branch":null,"worktreePath":null,"latestTurn":{"turnId":"x","state":"running","requestedAt":"2026-10-09T01:09:06.436Z","startedAt":"2026-10-09T01:09:06.436Z","completedAt":null},"createdAt":"2026-10-09T01:05:20.791Z","updatedAt":"2026-10-09T01:09:09.490Z","archivedAt":null,"session":{"status":"running","activeTurnId":"x"},"hasPendingApprovals":true,"hasPendingUserInput":false,"hasActionableProposedPlan":false}"""

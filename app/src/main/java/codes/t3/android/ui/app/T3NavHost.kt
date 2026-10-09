@@ -133,6 +133,7 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                                 onCancelQueued = vm::cancelQueued,
                                 onSteerQueued = vm::steerQueued,
                                 onResumeQueue = vm::resumeQueue,
+                                onDraftRestored = vm::draftRestored,
                                 onViewDiff = { from, to, title ->
                                     nav.navigate(DiffRoute(route.environmentId, route.threadId, from, to, title, vm.state.value?.title.orEmpty()))
                                 },

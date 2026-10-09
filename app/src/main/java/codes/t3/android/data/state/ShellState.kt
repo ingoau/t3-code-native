@@ -29,10 +29,9 @@ data class ShellState(
         if (protocol == 1) return applyV1(obj, kind)
         if (kind == "snapshot") {
             val snapshot = T3Json.decodeFromJsonElement<ShellSnapshot>(obj["snapshot"] ?: return this)
-            // A late snapshot carrying resolvedRepositoryIdentityRoots is only an enrichment refresh.
-            if (obj.containsKey("resolvedRepositoryIdentityRoots") && loaded) {
-                return copy(projects = projects + snapshot.projects.associateBy { it.id })
-            }
+            // A late snapshot carrying resolvedRepositoryIdentityRoots only enriches repository identity, which this
+            // client doesn't use; applying it wholesale could revert newer deltas.
+            if (obj.containsKey("resolvedRepositoryIdentityRoots") && loaded) return this
             return ShellState(
                 protocol = protocol,
                 sequence = snapshot.snapshotSequence,

@@ -75,6 +75,14 @@ class ReducerTest {
         assertTrue(s.timeline.isEmpty())
     }
 
+    @Test fun malformedSnapshotSetsErrorInsteadOfThrowing() {
+        val s = ThreadState().apply(j("""{"kind":"snapshot","snapshotSequence":3,"projection":{"thread":{"title":"no id"},"runs":[{"status":"x"}]}}"""))
+        assertFalse(s.loaded)
+        assertNotNull(s.error)
+        // A null event payload is skipped but still advances the cursor.
+        assertEquals(9, ThreadState(sequence = 1).apply(j("""{"kind":"event","sequence":9,"event":null}""")).sequence)
+    }
+
     @Test fun userInputQuestionDerivation() {
         var s = ThreadState()
         s = s.apply(j("""{"kind":"snapshot","snapshotSequence":1,"projection":{"thread":$threadJson,"turnItems":[${item("qi", "user_input_request", 1, ""","requestId":"q2","questions":[{"id":"layout","header":"Layout","question":"Which?","options":[{"label":"A"},{"label":"B","value":"b"}],"multiSelect":false}],"responseMode":"message"""")}],"runtimeRequests":[{"id":"q2","kind":"user_input","status":"pending","responseCapability":{"type":"message"}}]}}"""))

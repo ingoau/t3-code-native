@@ -58,21 +58,28 @@ class T3Repository(
         scope.launch { environments.environments.collect { sync(it) } }
     }
 
-    private suspend fun sync(saved: List<SavedEnvironment>) = mutex.withLock {
-        val current = _connections.value.toMutableMap()
-        val wanted = saved.filter { it.enabled }.associateBy { it.environmentId }
-        (current.keys - wanted.keys).forEach { id -> current.remove(id)?.stop() }
-        wanted.forEach { (id, env) ->
-            val existing = current[id]
-            if (existing != null && existing.environment.httpBaseUrl == env.httpBaseUrl && existing.environment.encryptedToken == env.encryptedToken) {
-                existing.rename(env)
-            } else {
-                existing?.stop()
-                val token = runCatching { environments.cipher.decrypt(env.encryptedToken) }.getOrNull() ?: return@forEach
-                current[id] = EnvironmentConnection(env, token, http, api, scope).also { it.start() }
+    private suspend fun sync(saved: List<SavedEnvironment>) {
+        val retired = mutableListOf<EnvironmentConnection>()
+        mutex.withLock {
+            val current = _connections.value.toMutableMap()
+            val wanted = saved.filter { it.enabled }.associateBy { it.environmentId }
+            (current.keys - wanted.keys).forEach { id -> current.remove(id)?.let(retired::add) }
+            wanted.forEach { (id, env) ->
+                val existing = current[id]
+                if (existing != null && existing.environment.httpBaseUrl == env.httpBaseUrl && existing.environment.encryptedToken == env.encryptedToken) {
+                    existing.rename(env)
+                } else {
+                    existing?.let(retired::add)
+                    // A token that can't be decrypted (e.g. restored onto a new device) yields a Blocked connection
+                    // that asks the user to pair again, rather than silently disappearing.
+                    val token = runCatching { environments.cipher.decrypt(env.encryptedToken) }.getOrNull()
+                    current[id] = EnvironmentConnection(env, token, http, api, scope).also { it.start() }
+                }
             }
+            _connections.value = current
         }
-        _connections.value = current
+        // Stopping can wait on in-flight network calls; don't hold up other environment changes for it.
+        retired.forEach { conn -> scope.launch { conn.stop() } }
     }
 
     fun connection(environmentId: String): EnvironmentConnection? = _connections.value[environmentId]

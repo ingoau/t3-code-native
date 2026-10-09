@@ -16,7 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
 open class T3App : Application() {
-    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + codes.t3.android.data.LoggingExceptionHandler)
     lateinit var repository: T3Repository
         private set
     lateinit var settings: AppSettingsRepository

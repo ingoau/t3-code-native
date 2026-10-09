@@ -37,9 +37,14 @@ object Attachments {
         val longest = maxOf(bounds.outWidth, bounds.outHeight)
         var sample = 1
         while (longest / (sample * 2) >= MAX_EDGE) sample *= 2
-        val bitmap = BitmapFactory.decodeByteArray(raw, 0, raw.size, BitmapFactory.Options().apply { inSampleSize = sample })
+        val decoded = BitmapFactory.decodeByteArray(raw, 0, raw.size, BitmapFactory.Options().apply { inSampleSize = sample })
             ?: error("Unsupported image format")
-        val keep = mime in allowed && raw.size <= MAX_BYTES && longest <= MAX_EDGE * 2
+        // Camera photos are often stored sideways with an EXIF rotation; re-encoding drops EXIF, so bake it in.
+        val rotation = runCatching { androidx.exifinterface.media.ExifInterface(raw.inputStream()).rotationDegrees }.getOrDefault(0)
+        val bitmap = if (rotation == 0) decoded else Bitmap.createBitmap(
+            decoded, 0, 0, decoded.width, decoded.height, android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }, true,
+        )
+        val keep = rotation == 0 && mime in allowed && raw.size <= MAX_BYTES && longest <= MAX_EDGE * 2
         if (keep) return@withContext PreparedImage(name, mime, raw, thumbnail(bitmap))
         val scaled = scaleToFit(bitmap, MAX_EDGE)
         val out = ByteArrayOutputStream()
@@ -80,9 +85,15 @@ object Attachments {
         }
     }
 
-    /** Fetch an attachment's bytes through a short-lived signed URL from `assets.createUrl`. */
-    suspend fun download(conn: EnvironmentConnection, http: okhttp3.OkHttpClient, attachment: JsonObject): Bitmap? {
+    /** Decoded thumbnails, so scrolling back doesn't re-download. Sized by bytes, ~1/16 of the heap. */
+    private val cache = object : android.util.LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 16).toInt()) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+
+    /** Fetch an attachment through a short-lived signed URL from `assets.createUrl`, decoded near [targetPx]. */
+    suspend fun download(conn: EnvironmentConnection, http: okhttp3.OkHttpClient, attachment: JsonObject, targetPx: Int = 640): Bitmap? {
         val id = (attachment["id"] as? JsonPrimitive)?.contentOrNull ?: return null
+        cache.get("${conn.environmentId}/$id")?.let { return it }
         val result = conn.call("assets.createUrl", buildJsonObject {
             put("resource", buildJsonObject {
                 put("_tag", "attachment")
@@ -98,8 +109,12 @@ object Attachments {
             http.newCall(Request.Builder().url(url).build()).execute().use { r ->
                 if (!r.isSuccessful) return@withContext null
                 val bytes = r.body.bytes()
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = if (bytes.size > 2_000_000) 2 else 1 })
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                var sample = 1
+                while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= targetPx) sample *= 2
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
             }
-        }
+        }?.also { cache.put("${conn.environmentId}/$id", it) }
     }
 }

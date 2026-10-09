@@ -55,11 +55,14 @@ class AttachmentTray(private val scope: CoroutineScope, private val repository: 
     }
 
     /** Uploaded refs to send, clearing the tray. */
-    fun take(): JsonArray {
-        val refs = _items.value.mapNotNull { it.ref }
-        _items.value = emptyList()
-        return JsonArray(refs)
-    }
+    fun take(): JsonArray = JsonArray(takeItems().mapNotNull { it.ref })
+
+    /** Removes and returns everything in the tray (so a failed send can [restore] it). */
+    fun takeItems(): List<PendingAttachment> = _items.value.also { _items.value = emptyList() }
+
+    fun restore(items: List<PendingAttachment>) { _items.update { items + it } }
+
+    fun clear() { _items.value = emptyList() }
 
     val ready: Boolean get() = _items.value.none { it.uploading }
 }

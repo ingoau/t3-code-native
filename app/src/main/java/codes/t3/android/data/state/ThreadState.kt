@@ -126,15 +126,16 @@ data class ThreadState(
         val obj = element as? JsonObject ?: return this
         return when ((obj["kind"] as? JsonPrimitive)?.contentOrNull) {
             "snapshot" -> {
-                val projection = T3Json.decodeFromJsonElement<ThreadProjection>(obj["projection"] ?: return this)
+                val raw = obj["projection"] ?: return this
                 val seq = (obj["snapshotSequence"] as? JsonPrimitive)?.longOrNull ?: 0
-                applySnapshot(seq, projection)
+                runCatching { T3Json.decodeFromJsonElement<ThreadProjection>(raw) }
+                    .fold({ applySnapshot(seq, it) }, { copy(error = "Couldn't read this thread: ${it.message}") })
             }
             "synchronized" -> copy(synchronized = true)
             "event" -> {
                 val seq = (obj["sequence"] as? JsonPrimitive)?.longOrNull ?: return this
                 if (seq <= sequence) return this
-                val event = obj["event"]?.jsonObject ?: return copy(sequence = seq)
+                val event = obj["event"] as? JsonObject ?: return copy(sequence = seq)
                 runCatching { applyEvent(event) }.getOrDefault(this).copy(sequence = seq)
             }
             else -> this

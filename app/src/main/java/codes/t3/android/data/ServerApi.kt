@@ -69,9 +69,19 @@ class ServerApi(private val http: OkHttpClient) {
         T3Json.decodeFromString<WebSocketTicket>(execute(request))
     }
 
-    private fun execute(request: Request): String {
+    /** Runs the call so that coroutine cancellation also cancels the HTTP request. */
+    private suspend fun execute(request: Request): String {
+        val call = http.newCall(request)
         val response = try {
-            http.newCall(request).execute()
+            kotlinx.coroutines.suspendCancellableCoroutine<okhttp3.Response> { cont ->
+                cont.invokeOnCancellation { call.cancel() }
+                call.enqueue(object : okhttp3.Callback {
+                    override fun onFailure(call: okhttp3.Call, e: IOException) { if (cont.isActive) cont.resumeWith(Result.failure(e)) }
+                    override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                        if (cont.isActive) cont.resumeWith(Result.success(response)) else response.close()
+                    }
+                })
+            }
         } catch (e: IOException) {
             throw ServerApiException(friendlyNetworkError(e))
         }

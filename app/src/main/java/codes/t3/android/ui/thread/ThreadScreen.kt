@@ -106,6 +106,8 @@ data class ThreadUiState(
     val showPlanToggle: Boolean = false,
     val attachments: List<codes.t3.android.ui.app.PendingAttachment> = emptyList(),
     val canAttach: Boolean = false,
+    /** Text of a message that failed to send, to put back into the composer. */
+    val restoredDraft: String? = null,
 )
 
 class ThreadCallbacks(
@@ -128,12 +130,16 @@ class ThreadCallbacks(
     val onSteerQueued: (String) -> Unit = {},
     val onResumeQueue: () -> Unit = {},
     val onViewDiff: (fromTurn: Int, toTurn: Int, title: String) -> Unit = { _, _, _ -> },
+    val onDraftRestored: () -> Unit = {},
     val loadImage: suspend (kotlinx.serialization.json.JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
 )
 
 @Composable
 fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: String, modifier: Modifier = Modifier) {
     var text by rememberSaveable(draftKey) { mutableStateOf("") }
+    LaunchedEffect(state.restoredDraft) {
+        state.restoredDraft?.let { if (text.isBlank()) text = it; callbacks.onDraftRestored() }
+    }
     var pickerOpen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -348,7 +354,8 @@ private fun StatusPill(
         is ConnectionStatus.Blocked -> c.error
         ConnectionStatus.Connecting -> "Connecting to ${state.environmentLabel}…"
         ConnectionStatus.Disabled -> "${state.environmentLabel} is turned off"
-        ConnectionStatus.Connected -> null
+        // Connected but this thread's live updates failed: say so instead of silently going stale.
+        ConnectionStatus.Connected -> state.detail.error?.takeIf { state.detail.loaded }?.let { "Not syncing · tap to retry" }
     }
     val queued = state.detail.queuedRuns.size
     val label: String? = when {
