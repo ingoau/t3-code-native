@@ -297,6 +297,9 @@ data class RuntimeRequest(
 )
 
 @Serializable
+data class Checkpoint(val id: String, val appRunOrdinal: Int? = null, val status: String = "ready", val runId: String? = null)
+
+@Serializable
 data class ConversationMessage(
     val id: String,
     val runId: String? = null,
@@ -325,6 +328,7 @@ data class ThreadProjection(
     val providerThreads: List<ProviderThread> = emptyList(),
     val runtimeRequests: List<RuntimeRequest> = emptyList(),
     val messages: List<ConversationMessage> = emptyList(),
+    val checkpoints: List<Checkpoint> = emptyList(),
     val turnItems: List<TurnItem> = emptyList(),
     val visibleTurnItems: List<ProjectedTurnItem> = emptyList(),
     val updatedAt: String? = null,

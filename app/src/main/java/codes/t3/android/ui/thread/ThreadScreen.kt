@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Difference
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -125,6 +126,7 @@ class ThreadCallbacks(
     val onCancelQueued: (String) -> Unit = {},
     val onSteerQueued: (String) -> Unit = {},
     val onResumeQueue: () -> Unit = {},
+    val onViewDiff: (fromTurn: Int, toTurn: Int, title: String) -> Unit = { _, _, _ -> },
     val loadImage: suspend (kotlinx.serialization.json.JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
 )
 
@@ -142,7 +144,17 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
     val atBottom by remember { derivedStateOf { listState.firstVisibleItemIndex <= 1 } }
     val approvals = detail.pendingApprovals
     val question = detail.pendingUserInput
-    val actions = remember(callbacks) { FeedActions(onImplementPlan = callbacks.onImplementPlan, loadFullItem = callbacks.loadFullItem, loadImage = callbacks.loadImage) }
+    val checkpoints = detail.checkpoints
+    val actions = remember(callbacks, checkpoints) {
+        FeedActions(
+            onImplementPlan = callbacks.onImplementPlan,
+            loadFullItem = callbacks.loadFullItem,
+            loadImage = callbacks.loadImage,
+            onViewDiff = { id ->
+                checkpoints[id]?.appRunOrdinal?.let { turn -> callbacks.onViewDiff((turn - 1).coerceAtLeast(0), turn, "Turn $turn changes") }
+            },
+        )
+    }
     val picker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(6),
     ) { uris -> if (uris.isNotEmpty()) callbacks.onPickImages(uris) }
@@ -161,7 +173,12 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                         Text(state.subtitle, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 },
-                actions = { ThreadOverflow(state.shell, callbacks, onRename = { renaming = true }, onDelete = { confirmDelete = true }) },
+                actions = {
+                    detail.latestTurnCount?.let { turn ->
+                        IconButton(onClick = { callbacks.onViewDiff(0, turn, "All changes") }) { Icon(Icons.Rounded.Difference, "View all changes") }
+                    }
+                    ThreadOverflow(state.shell, callbacks, onRename = { renaming = true }, onDelete = { confirmDelete = true })
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
         },

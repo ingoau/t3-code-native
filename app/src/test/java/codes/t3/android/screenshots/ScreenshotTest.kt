@@ -169,6 +169,45 @@ class ScreenshotTest {
         capture("14_settings")
     }
 
+    @Test fun diff() {
+        val diff = """
+            diff --git a/packages/client-runtime/src/rpc/session.ts b/packages/client-runtime/src/rpc/session.ts
+            index 3f2a1c4..9b8e7d2 100644
+            --- a/packages/client-runtime/src/rpc/session.ts
+            +++ b/packages/client-runtime/src/rpc/session.ts
+            @@ -125,12 +125,15 @@ const makePinger = (socket: Socket) =>
+               Effect.gen(function* () {
+                 let pongSeen = true
+                 while (true) {
+                   yield* Effect.sleep("5 seconds")
+            -      if (!pongSeen) return yield* close()
+            -      yield* send(ping)
+            +      if (!pongSeen) {
+            +        return yield* socket.close("keepalive timeout")
+            +      }
+            +      pongSeen = false
+            +      yield* socket.send({ _tag: "Ping" })
+                 }
+               })
+            diff --git a/packages/client-runtime/src/rpc/session.test.ts b/packages/client-runtime/src/rpc/session.test.ts
+            index 77a0c3e..1d4f2b9 100644
+            --- a/packages/client-runtime/src/rpc/session.test.ts
+            +++ b/packages/client-runtime/src/rpc/session.test.ts
+            @@ -40,6 +40,13 @@ describe("session keepalive", () => {
+               it.effect("reconnects after keepalive timeout", () =>
+                 Effect.gen(function* () {
+                   const server = yield* MockServer
+            +      yield* TestClock.adjust("4 seconds")
+            +      yield* server.pong()
+            +      yield* TestClock.adjust("1 second")
+            +      expect(yield* server.isOpen).toBe(true)
+                 }),
+               )
+        """.trimIndent()
+        render(true) { codes.t3.android.ui.diff.DiffScreen("Turn 1 changes", "Fix flaky websocket reconnect test", diff, null) {} }
+        capture("16_diff")
+    }
+
     @Test fun home_long_press_menu() {
         render(false) { Home() }
         compose.onNodeWithContentDescription("Search threads").assertExists()

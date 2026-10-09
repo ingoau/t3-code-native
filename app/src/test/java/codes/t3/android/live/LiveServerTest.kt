@@ -129,6 +129,17 @@ class LiveServerTest {
             withTimeout(10_000) { conn.observeThread(threadId).first { it.queued.isEmpty() } }
             println("Cancelled queued run")
 
+            // Diff RPCs against any thread that has a captured checkpoint (e.g. from an E2E agent turn).
+            shell.threads.values.firstOrNull { it.latestRunCompletedAt != null }?.let { t ->
+                val st = withTimeout(10_000) { conn.observeThread(t.id).first { it.loaded } }
+                val turn = st.latestTurnCount
+                println("Checkpoints on '${t.title}': ${st.checkpoints.values.map { it.appRunOrdinal }}")
+                if (turn != null) {
+                    val diff = conn.call("orchestration.getFullThreadDiff", buildJsonObject { put("threadId", t.id); put("toTurnCount", turn) })
+                    println("Full diff ok: ${diff.toString().take(120)}")
+                }
+            }
+
             conn.dispatch(Commands.simple("thread.delete", threadId))
             withTimeout(10_000) { conn.shell.first { threadId !in it.threads } }
             println("Deleted thread")

@@ -94,6 +94,8 @@ data class FeedActions(
     val onImplementPlan: (TurnItem) -> Unit = {},
     val loadFullItem: suspend (String) -> TurnItem? = { null },
     val loadImage: suspend (JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
+    /** Opens the diff for a checkpoint item (by its checkpointId), when the turn count is known. */
+    val onViewDiff: ((String) -> Unit)? = null,
 )
 
 @Composable
@@ -106,7 +108,7 @@ fun FeedRow(entry: FeedEntry, wrapCode: Boolean, actions: FeedActions, modifier:
         is FeedEntry.Plan -> PlanCard(entry.item, actions, modifier)
         is FeedEntry.Todo -> TodoCard(entry.item, modifier)
         is FeedEntry.Error -> ErrorCard(entry.item, modifier)
-        is FeedEntry.Checkpoint -> CheckpointCard(entry.item, modifier)
+        is FeedEntry.Checkpoint -> CheckpointCard(entry.item, modifier, actions.onViewDiff)
         is FeedEntry.Notice -> NoticeRow(entry.text, modifier)
         FeedEntry.Thinking -> ThinkingRow(modifier)
     }
@@ -278,7 +280,7 @@ fun WorkGroup(entry: FeedEntry.Work, modifier: Modifier = Modifier, actions: Fee
                     Spacer(Modifier.width(10.dp))
                     ShimmerText(liveLabel(running), MaterialTheme.typography.bodyMedium, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f))
                 } else {
-                    Icon(workIcon(items.firstOrNull { it.type != "reasoning" } ?: items.first()), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(workIcon(groupIconItem(items)), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.width(10.dp))
                     Text(
                         summarizeWork(items),
@@ -301,6 +303,11 @@ fun WorkGroup(entry: FeedEntry.Work, modifier: Modifier = Modifier, actions: Fee
         }
     }
 }
+
+/** The most representative item of a group: commands, then edits, then searches, then anything. */
+private fun groupIconItem(items: List<TurnItem>): TurnItem =
+    listOf("command_execution", "file_change", "file_search", "web_search", "dynamic_tool")
+        .firstNotNullOfOrNull { t -> items.firstOrNull { it.type == t } } ?: items.first()
 
 @Composable
 fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
@@ -543,7 +550,7 @@ fun ErrorCard(item: TurnItem, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun CheckpointCard(item: TurnItem, modifier: Modifier = Modifier) {
+fun CheckpointCard(item: TurnItem, modifier: Modifier = Modifier, onViewDiff: ((String) -> Unit)? = null) {
     val files = item.arr("files").orEmpty().mapNotNull { it as? JsonObject }
     if (files.isEmpty()) return
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
@@ -568,6 +575,14 @@ fun CheckpointCard(item: TurnItem, modifier: Modifier = Modifier) {
             }
             if (expanded) {
                 Spacer(Modifier.size(6.dp))
+                val checkpointId = item.str("checkpointId")
+                if (onViewDiff != null && checkpointId != null) {
+                    androidx.compose.material3.FilledTonalButton(onClick = { onViewDiff(checkpointId) }, modifier = Modifier.padding(bottom = 6.dp)) {
+                        Icon(Icons.Rounded.Difference, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("View diff")
+                    }
+                }
                 files.forEach { f ->
                     Row(Modifier.padding(vertical = 3.dp)) {
                         Text(

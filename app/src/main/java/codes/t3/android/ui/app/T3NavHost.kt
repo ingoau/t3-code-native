@@ -60,6 +60,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 @Serializable data object EnvironmentsRoute
 @Serializable data class AddEnvironmentRoute(val link: String? = null)
 @Serializable data object ArchiveRoute
+@Serializable data class DiffRoute(val environmentId: String, val threadId: String, val fromTurn: Int, val toTurn: Int, val title: String, val subtitle: String)
 
 @Composable
 fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLink: String?, onLinkConsumed: () -> Unit) {
@@ -132,6 +133,9 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                                 onCancelQueued = vm::cancelQueued,
                                 onSteerQueued = vm::steerQueued,
                                 onResumeQueue = vm::resumeQueue,
+                                onViewDiff = { from, to, title ->
+                                    nav.navigate(DiffRoute(route.environmentId, route.threadId, from, to, title, vm.state.value?.title.orEmpty()))
+                                },
                             )
                         },
                     )
@@ -205,6 +209,26 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                     onBack = { nav.popBackStack() },
                     onConnect = { target -> app.pair(target) { nav.popBackStack(HomeRoute, inclusive = false) } },
                 )
+            }
+            composable<DiffRoute> { entry ->
+                val route = entry.toRoute<DiffRoute>()
+                var diff by remember { mutableStateOf<String?>(null) }
+                var error by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(route) {
+                    val conn = app.repository.connection(route.environmentId)
+                    if (conn == null) { error = "Environment is not connected"; return@LaunchedEffect }
+                    runCatching {
+                        val payload = kotlinx.serialization.json.buildJsonObject {
+                            put("threadId", kotlinx.serialization.json.JsonPrimitive(route.threadId))
+                            if (route.fromTurn > 0) put("fromTurnCount", kotlinx.serialization.json.JsonPrimitive(route.fromTurn))
+                            put("toTurnCount", kotlinx.serialization.json.JsonPrimitive(route.toTurn))
+                        }
+                        val method = if (route.fromTurn > 0) "orchestration.getTurnDiff" else "orchestration.getFullThreadDiff"
+                        val result = conn.call(method, payload) as JsonObject
+                        (result["diff"] as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty()
+                    }.onSuccess { diff = it }.onFailure { error = errorText(it) }
+                }
+                codes.t3.android.ui.diff.DiffScreen(route.title, route.subtitle, diff, error, onBack = { nav.popBackStack() })
             }
             composable<ArchiveRoute> {
                 ArchiveRoute(app, nav)

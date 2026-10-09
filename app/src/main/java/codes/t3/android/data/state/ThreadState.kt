@@ -1,6 +1,7 @@
 package codes.t3.android.data.state
 
 import codes.t3.android.data.model.ApprovalOption
+import codes.t3.android.data.model.Checkpoint
 import codes.t3.android.data.model.ConversationMessage
 import codes.t3.android.data.model.PendingApproval
 import codes.t3.android.data.model.PendingUserInput
@@ -35,6 +36,7 @@ data class ThreadState(
     val providerThreads: Map<String, ProviderThread> = emptyMap(),
     val requests: Map<String, RuntimeRequest> = emptyMap(),
     val messages: Map<String, ConversationMessage> = emptyMap(),
+    val checkpoints: Map<String, Checkpoint> = emptyMap(),
     val items: Map<String, TurnItem> = emptyMap(),
     /** Rows from parent threads (forks) that precede local items. */
     val inherited: List<TurnItem> = emptyList(),
@@ -113,6 +115,7 @@ data class ThreadState(
         providerThreads = projection.providerThreads.associateBy { it.id },
         requests = projection.runtimeRequests.associateBy { it.id },
         messages = projection.messages.associateBy { it.id },
+        checkpoints = projection.checkpoints.associateBy { it.id },
         items = projection.turnItems.associateBy { it.id },
         inherited = projection.visibleTurnItems.filter { it.visibility != "local" }.sortedBy { it.position }.map { it.item },
         synchronized = synchronized,
@@ -167,6 +170,10 @@ data class ThreadState(
                 val r = T3Json.decodeFromJsonElement<RuntimeRequest>(payload)
                 copy(requests = requests + (r.id to r))
             }
+            type == "checkpoint.captured" -> {
+                val c = T3Json.decodeFromJsonElement<Checkpoint>(payload)
+                copy(checkpoints = checkpoints + (c.id to c))
+            }
             type == "message.updated" -> {
                 val m = T3Json.decodeFromJsonElement<ConversationMessage>(payload)
                 copy(messages = messages + (m.id to m))
@@ -186,6 +193,9 @@ data class ThreadState(
         latestVisibleMessage = previous.latestVisibleMessage,
         pendingRuntimeRequest = previous.pendingRuntimeRequest,
     )
+
+    /** Highest turn count with a captured checkpoint (for the whole-thread diff). */
+    val latestTurnCount: Int? get() = checkpoints.values.mapNotNull { it.appRunOrdinal }.maxOrNull()
 
     val contextUsage get() = providerThreads.values.mapNotNull { it.contextUsage }.lastOrNull()
 
