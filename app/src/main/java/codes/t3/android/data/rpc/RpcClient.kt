@@ -54,6 +54,9 @@ class RpcClient(
     val state: StateFlow<State> = _state.asStateFlow()
 
     @Volatile private var socket: WebSocket? = null
+
+    /** Set when a `Pong` arrives; the keepalive loop clears it after each `Ping`. */
+    @Volatile var pongSeen: Boolean = true
     private var openSignal = CompletableDeferred<Unit>()
 
     /** Called whenever the socket closes; lets the owner schedule reconnects. */
@@ -142,7 +145,10 @@ class RpcClient(
         }
     }
 
-    fun ping() = send(buildJsonObject { put("_tag", "Ping") })
+    fun ping(): Boolean {
+        pongSeen = false
+        return send(buildJsonObject { put("_tag", "Ping") })
+    }
 
     private fun handle(text: String) {
         val element = runCatching { json.parseToJsonElement(text) }.getOrNull() ?: return
@@ -169,7 +175,8 @@ class RpcClient(
                 val err = RpcException("Server protocol error: ${frame["defect"] ?: frame["error"] ?: frame}")
                 failAll(err)
             }
-            else -> Unit // Pong and unknown frames
+            "Pong" -> pongSeen = true
+            else -> Unit
         }
     }
 

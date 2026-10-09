@@ -5,6 +5,13 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
+val robolectricRuntime: Configuration by configurations.creating { isTransitive = false }
+val robolectricRuntimeDir = layout.buildDirectory.dir("robolectric-runtime")
+val copyRobolectricRuntime = tasks.register<Copy>("copyRobolectricRuntime") {
+    from(robolectricRuntime)
+    into(robolectricRuntimeDir)
+}
+
 android {
     namespace = "codes.t3.android"
     compileSdk = 37
@@ -35,7 +42,15 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
-            all { it.systemProperty("robolectric.graphicsMode", "NATIVE") }
+            all {
+                it.systemProperty("robolectric.graphicsMode", "NATIVE")
+                // Resolve Robolectric's Android runtime through Gradle (cached, retried) instead of at test time.
+                it.systemProperty("robolectric.offline", "true")
+                it.systemProperty("robolectric.dependency.dir", robolectricRuntimeDir.get().asFile.absolutePath)
+                it.dependsOn(copyRobolectricRuntime)
+                it.systemProperty("t3.pairingUrl", System.getenv("T3_PAIRING_URL") ?: "")
+                it.testLogging { showStandardStreams = true }
+            }
         }
     }
 }
@@ -81,6 +96,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.markdown.m3)
     implementation(libs.markdown.code)
+
+    robolectricRuntime("org.robolectric:android-all-instrumented:15-robolectric-13954326-i7")
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
