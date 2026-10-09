@@ -556,9 +556,8 @@ fun ThreadRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(Modifier.weight(1f))
                     if (badge != null && !settled) StatusPill(badge)
                     else Text(
                         relativeAge(thread.latestUserMessageAt ?: thread.updatedAt),
@@ -586,21 +585,28 @@ fun ThreadRow(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    val meta = listOfNotNull(thread.branch, entry.environmentLabel.takeIf { showEnvironment })
-                    if (meta.isNotEmpty()) {
+                    val envLabel = entry.environmentLabel.takeIf { showEnvironment }
+                    if (thread.branch != null || envLabel != null) {
                         Spacer(Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (thread.branch != null) {
                                 Icon(Icons.Rounded.CallSplit, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.width(4.dp))
+                                Text(
+                                    thread.branch,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
                             }
-                            Text(
-                                meta.joinToString("  ·  "),
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = if (thread.branch != null) FontFamily.Monospace else null),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            if (envLabel != null) {
+                                if (thread.branch != null) Text("  ·  ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(Icons.Rounded.Computer, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.width(4.dp))
+                                Text(envLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                 }

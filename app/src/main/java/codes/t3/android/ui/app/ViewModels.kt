@@ -180,7 +180,7 @@ class ThreadViewModel(
             ),
             wrapCode = settings.wrapCode,
             enterToSend = settings.enterToSend,
-            showPlanToggle = provider?.showInteractionModeToggle == true || thread?.interactionMode == "plan",
+            showPlanToggle = thread?.interactionMode == "plan" || (settings.legacyPlanMode && provider?.showInteractionModeToggle == true),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -203,6 +203,10 @@ class ThreadViewModel(
     fun send(text: String, mode: SendMode, sourcePlan: Pair<String, String>? = null) {
         if (text.isBlank()) return
         val s = state.value ?: return
+        when (text.trim().lowercase()) {
+            "/plan" -> return dispatch("switch to plan mode", Commands.setInteractionMode(threadId, "plan"))
+            "/default", "/build" -> return dispatch("switch to default mode", Commands.setInteractionMode(threadId, "default"))
+        }
         val runId = s.shell?.activeRunId ?: s.detail.activeRun?.id
         val dispatchMode = when {
             !s.composer.running || runId == null -> Commands.DispatchMode.StartImmediately
@@ -260,6 +264,7 @@ class ThreadViewModel(
 
 class NewThreadViewModel(
     private val repository: T3Repository,
+    private val settingsRepo: AppSettingsRepository,
     private val preferredProjectId: String?,
     private val preferredEnvironmentId: String?,
 ) : ViewModel() {
@@ -296,7 +301,7 @@ class NewThreadViewModel(
         )
     }
 
-    val state: StateFlow<NewThreadUiState?> = combine(repository.projects, configs, local, repository.savedEnvironments) { projects, configs, l, saved ->
+    val state: StateFlow<NewThreadUiState?> = combine(repository.projects, configs, local, repository.savedEnvironments, settingsRepo.settings) { projects, configs, l, saved, settings ->
         val sorted = projects.sortedByDescending { it.project.updatedAt }
         val selected = l.key?.let { (e, p) -> sorted.firstOrNull { it.environmentId == e && it.project.id == p } }
             ?: sorted.firstOrNull { it.project.id == preferredProjectId && (preferredEnvironmentId == null || it.environmentId == preferredEnvironmentId) }
@@ -316,7 +321,7 @@ class NewThreadViewModel(
                 runtimeMode = l.runtime ?: defaultRuntime,
                 planMode = l.plan,
             ),
-            showPlanToggle = provider?.showInteractionModeToggle == true,
+            showPlanToggle = l.plan || (settings.legacyPlanMode && provider?.showInteractionModeToggle == true),
             workspace = l.workspace,
             branch = l.branch,
             branches = l.branches,
@@ -392,6 +397,8 @@ class NewThreadViewModel(
         val selected = s.selected ?: return
         val selection = s.composer.selection ?: return UiEvents.show("Choose a model first. Set up a provider on the host if none are listed.")
         if (text.isBlank() || starting.value) return
+        if (text.trim().lowercase() == "/plan") { plan.value = true; return }
+        if (text.trim().lowercase() in setOf("/default", "/build")) { plan.value = false; return }
         val conn = repository.connection(selected.environmentId) ?: return UiEvents.show("Environment is not connected")
         val threadId = UUID.randomUUID().toString()
         val workspaceStrategy = when (s.workspace) {

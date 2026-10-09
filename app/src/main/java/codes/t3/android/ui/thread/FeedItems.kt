@@ -255,7 +255,7 @@ fun WorkGroup(entry: FeedEntry.Work, modifier: Modifier = Modifier, actions: Fee
                     Spacer(Modifier.width(10.dp))
                     ShimmerText(liveLabel(running), MaterialTheme.typography.bodyMedium, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f))
                 } else {
-                    Icon(workIcon(items.first()), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(workIcon(items.firstOrNull { it.type != "reasoning" } ?: items.first()), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.width(10.dp))
                     Text(
                         summarizeWork(items),

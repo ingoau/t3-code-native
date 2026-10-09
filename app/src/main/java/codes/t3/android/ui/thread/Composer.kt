@@ -158,17 +158,18 @@ fun Composer(
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                ModelPill(model, onOpenModelPicker, Modifier.weight(1f, fill = false))
-                if (onTogglePlan != null) {
-                    ToolbarChip(
-                        icon = if (model.planMode) Icons.Rounded.Lightbulb else Icons.Rounded.Construction,
-                        label = if (model.planMode) "Plan" else "Build",
-                        selected = model.planMode,
-                        onClick = onTogglePlan,
-                    )
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ModelPill(model, onOpenModelPicker, Modifier.weight(1f, fill = false))
+                    if (onTogglePlan != null) {
+                        ToolbarChip(
+                            icon = if (model.planMode) Icons.Rounded.Lightbulb else Icons.Rounded.Construction,
+                            label = if (model.planMode) "Plan" else "Build",
+                            selected = model.planMode,
+                            onClick = onTogglePlan,
+                        )
+                    }
+                    RuntimeChip(model.runtimeMode, model.provider()?.supportedRuntimeModes, onRuntimeMode)
                 }
-                RuntimeChip(model.runtimeMode, model.provider()?.supportedRuntimeModes, onRuntimeMode)
-                Spacer(Modifier.weight(1f))
                 AnimatedVisibility(model.running && model.canStop, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
                     FilledTonalIconButton(
                         onClick = { haptics.performHapticFeedback(HapticFeedbackType.Reject); onStop() },
@@ -255,22 +256,11 @@ fun ModelPill(model: ComposerModel, onClick: () -> Unit, modifier: Modifier = Mo
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 150.dp),
+                modifier = Modifier.weight(1f, fill = false),
             )
-            effortLabel(model)?.let {
-                Text(" · $it", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-            }
             Icon(Icons.Rounded.UnfoldMore, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
-}
-
-private fun effortLabel(model: ComposerModel): String? {
-    val selection = model.selection ?: return null
-    val descriptor = model.provider()?.models?.firstOrNull { it.slug == selection.model }?.capabilities?.optionDescriptors
-        ?.firstOrNull { it.type == "select" && (it.id.contains("effort", true) || it.id.contains("reasoning", true)) } ?: return null
-    val value = selection.option(descriptor.id)?.content ?: descriptor.options.firstOrNull { it.isDefault == true }?.id ?: return null
-    return descriptor.options.firstOrNull { it.id == value }?.label ?: value
 }
 
 @Composable

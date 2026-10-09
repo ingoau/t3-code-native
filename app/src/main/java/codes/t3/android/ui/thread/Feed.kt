@@ -82,6 +82,8 @@ fun buildFeed(timeline: List<TurnItem>, runs: Map<String, Run>, activeRunId: Str
     val segments = mutableListOf<Pair<String?, MutableList<TurnItem>>>()
     for (item in timeline) {
         if (item.type == "assistant_message" && item.text.isBlank() && !item.streaming) continue
+        // Pending approvals/questions are shown as cards above the composer instead.
+        if ((item.type == "approval_request" || item.type == "user_input_request") && item.isRunning) continue
         val last = segments.lastOrNull()
         if (last != null && last.first == item.runId && item.runId != null) last.second += item
         else segments += item.runId to mutableListOf(item)

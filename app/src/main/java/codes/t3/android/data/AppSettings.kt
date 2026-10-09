@@ -25,6 +25,8 @@ data class AppSettings(
     val enterToSend: Boolean = false,
     val wrapCode: Boolean = false,
     val showSettled: Boolean = true,
+    /** Upstream keeps the Plan/Build toggle behind a legacy switch; `/plan` and `/default` still work. */
+    val legacyPlanMode: Boolean = false,
 )
 
 class AppSettingsRepository(private val store: DataStore<Preferences>) {
@@ -36,6 +38,7 @@ class AppSettingsRepository(private val store: DataStore<Preferences>) {
         val enterToSend = booleanPreferencesKey("enterToSend")
         val wrapCode = booleanPreferencesKey("wrapCode")
         val showSettled = booleanPreferencesKey("showSettled")
+        val legacyPlanMode = booleanPreferencesKey("legacyPlanMode")
     }
 
     val settings: Flow<AppSettings> = store.data.map { read(it) }
@@ -48,6 +51,7 @@ class AppSettingsRepository(private val store: DataStore<Preferences>) {
         enterToSend = p[Keys.enterToSend] ?: false,
         wrapCode = p[Keys.wrapCode] ?: false,
         showSettled = p[Keys.showSettled] ?: true,
+        legacyPlanMode = p[Keys.legacyPlanMode] ?: false,
     )
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
@@ -60,6 +64,7 @@ class AppSettingsRepository(private val store: DataStore<Preferences>) {
             p[Keys.enterToSend] = next.enterToSend
             p[Keys.wrapCode] = next.wrapCode
             p[Keys.showSettled] = next.showSettled
+            p[Keys.legacyPlanMode] = next.legacyPlanMode
         }
     }
 }

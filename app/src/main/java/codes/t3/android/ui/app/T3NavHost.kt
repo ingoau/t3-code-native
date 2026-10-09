@@ -132,7 +132,7 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
             }
             composable<NewThreadRoute> { entry ->
                 val route = entry.toRoute<NewThreadRoute>()
-                val vm: NewThreadViewModel = viewModel { NewThreadViewModel(app.repository, route.projectId, route.environmentId) }
+                val vm: NewThreadViewModel = viewModel { NewThreadViewModel(app.repository, settingsRepo, route.projectId, route.environmentId) }
                 val state by vm.state.collectAsStateWithLifecycle()
                 state?.let { s ->
                     NewThreadScreen(

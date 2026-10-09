@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardReturn
 import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.SettingsBrightness
 import androidx.compose.material.icons.rounded.WrapText
@@ -150,6 +151,14 @@ fun SettingsScreen(
                     onUpdate { it.copy(showSettled = v) }
                 }
                 NavRow(Icons.Rounded.Archive, "Archived threads", null, onOpenArchive)
+            }
+            group("Legacy") {
+                SwitchRow(
+                    Icons.Rounded.Lightbulb,
+                    "Plan mode",
+                    "Show the Plan/Build toggle in the composer. You can always type /plan or /default instead.",
+                    settings.legacyPlanMode,
+                ) { v -> onUpdate { it.copy(legacyPlanMode = v) } }
             }
             group("About") {
                 ListItem(
