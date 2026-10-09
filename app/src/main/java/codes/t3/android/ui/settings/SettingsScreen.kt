@@ -1,5 +1,6 @@
 package codes.t3.android.ui.settings
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
 ) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val haptics = rememberHaptics()
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
@@ -98,7 +100,7 @@ fun SettingsScreen(
                         modes.forEachIndexed { index, (mode, label, icon) ->
                             ToggleButton(
                                 checked = settings.themeMode == mode,
-                                onCheckedChange = { onUpdate { s -> s.copy(themeMode = mode) } },
+                                onCheckedChange = { haptics.tick(); onUpdate { s -> s.copy(themeMode = mode) } },
                                 modifier = Modifier.weight(1f),
                                 shapes = when (index) {
                                     0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
@@ -200,8 +202,9 @@ fun NavRow(icon: ImageVector, title: String, value: String?, onClick: () -> Unit
 
 @Composable
 fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+    val haptics = rememberHaptics()
     ListItem(
-        modifier = Modifier.selectable(checked, role = Role.Switch) { onChange(!checked) },
+        modifier = Modifier.selectable(checked, role = Role.Switch) { haptics.toggle(!checked); onChange(!checked) },
         leadingContent = icon?.let { { Icon(it, null) } },
         headlineContent = { Text(title) },
         supportingContent = subtitle?.let { { Text(it) } },
@@ -212,8 +215,9 @@ fun SwitchRow(icon: ImageVector?, title: String, subtitle: String?, checked: Boo
 
 @Composable
 fun ChoiceRow(title: String, subtitle: String?, selected: Boolean, onClick: () -> Unit) {
+    val haptics = rememberHaptics()
     ListItem(
-        modifier = Modifier.selectable(selected, role = Role.RadioButton, onClick = onClick),
+        modifier = Modifier.selectable(selected, role = Role.RadioButton) { if (!selected) haptics.tick(); onClick() },
         leadingContent = { RadioButton(selected = selected, onClick = null) },
         headlineContent = { Text(title) },
         supportingContent = subtitle?.let { { Text(it) } },

@@ -1,5 +1,6 @@
 package codes.t3.android.ui.thread
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -53,6 +54,10 @@ private fun Overline(text: String, color: androidx.compose.ui.graphics.Color) {
 
 @Composable
 fun ApprovalCard(approval: PendingApproval, onDecision: (String) -> Unit, modifier: Modifier = Modifier) {
+    val haptics = rememberHaptics()
+    // Nudge when an approval shows up, and confirm/reject on the decision.
+    androidx.compose.runtime.LaunchedEffect(approval.requestId) { haptics.threshold() }
+    val decide: (String) -> Unit = { d -> if (d == "decline" || d == "cancel") haptics.reject() else haptics.confirm(); onDecision(d) }
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = T3.colors.warningContainer,
@@ -93,11 +98,11 @@ fun ApprovalCard(approval: PendingApproval, onDecision: (String) -> Unit, modifi
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 approval.options.forEach { option ->
                     when (option.decision) {
-                        "accept" -> Button(onClick = { onDecision(option.decision) }, enabled = !approval.stale) { Text(option.label) }
-                        "decline", "cancel" -> TextButton(onClick = { onDecision(option.decision) }, enabled = !approval.stale) {
+                        "accept" -> Button(onClick = { decide(option.decision) }, enabled = !approval.stale) { Text(option.label) }
+                        "decline", "cancel" -> TextButton(onClick = { decide(option.decision) }, enabled = !approval.stale) {
                             Text(option.label, color = MaterialTheme.colorScheme.error)
                         }
-                        else -> OutlinedButton(onClick = { onDecision(option.decision) }, enabled = !approval.stale) { Text(option.label) }
+                        else -> OutlinedButton(onClick = { decide(option.decision) }, enabled = !approval.stale) { Text(option.label) }
                     }
                 }
             }
@@ -113,6 +118,8 @@ fun UserInputCard(
     onDismiss: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
+    val haptics = rememberHaptics()
+    androidx.compose.runtime.LaunchedEffect(input.requestId) { haptics.threshold() }
     val selections = remember(input.requestId) { mutableStateMapOf<String, Set<String>>() }
     val custom = remember(input.requestId) { mutableStateMapOf<String, String>() }
     fun answerFor(q: UserInputQuestion): List<String> =
@@ -152,6 +159,7 @@ fun UserInputCard(
                                     val cur = selections[q.id].orEmpty()
                                     selections[q.id] = if (q.multiSelect == true) (if (chosen) cur - value else cur + value) else setOf(value)
                                     custom.remove(q.id)
+                                    haptics.tick()
                                 }
                                 .padding(horizontal = 8.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -178,11 +186,12 @@ fun UserInputCard(
             }
             Spacer(Modifier.size(16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (onDismiss != null) TextButton(onClick = onDismiss) { Text("Dismiss") }
+                if (onDismiss != null) TextButton(onClick = { haptics.reject(); onDismiss() }) { Text("Dismiss") }
                 Spacer(Modifier.weight(1f))
                 Button(
                     enabled = complete && !input.stale,
                     onClick = {
+                        haptics.confirm()
                         val answers = input.questions.associate { it.id to answerFor(it) }
                         val multi = input.questions.filter { it.multiSelect == true && custom[it.id].isNullOrBlank() }.map { it.id }.toSet()
                         onSubmit(answers, multi)

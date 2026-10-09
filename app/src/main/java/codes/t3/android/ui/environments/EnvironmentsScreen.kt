@@ -1,5 +1,6 @@
 package codes.t3.android.ui.environments
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -70,6 +71,7 @@ fun EnvironmentsScreen(
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var renaming by remember { mutableStateOf<EnvironmentSnapshot?>(null) }
     var removing by remember { mutableStateOf<EnvironmentSnapshot?>(null) }
+    val haptics = rememberHaptics()
     Scaffold(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
@@ -103,7 +105,7 @@ fun EnvironmentsScreen(
                 EnvironmentCard(
                     env,
                     shape = segmentShape(index, environments.size),
-                    onToggle = { onToggle(env.saved.environmentId, it) },
+                    onToggle = { haptics.toggle(it); onToggle(env.saved.environmentId, it) },
                     onRename = { renaming = env },
                     onReconnect = { onReconnect(env.saved.environmentId) },
                     onRemove = { removing = env },

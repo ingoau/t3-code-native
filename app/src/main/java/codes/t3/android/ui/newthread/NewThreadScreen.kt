@@ -1,5 +1,6 @@
 package codes.t3.android.ui.newthread
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -116,6 +117,7 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
     var branchSheet by remember { mutableStateOf(false) }
     var pickerOpen by remember { mutableStateOf(false) }
     var addProject by remember { mutableStateOf(false) }
+    val haptics = rememberHaptics()
     LaunchedEffect(state.selected?.project?.id) { if (state.selected != null) callbacks.onLoadBranches() }
     val picker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(6),
@@ -153,13 +155,13 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
                         Row(horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween), modifier = Modifier.fillMaxWidth()) {
                             ToggleButton(
                                 checked = state.workspace == WorkspaceMode.Local,
-                                onCheckedChange = { callbacks.onWorkspace(WorkspaceMode.Local) },
+                                onCheckedChange = { haptics.tick(); callbacks.onWorkspace(WorkspaceMode.Local) },
                                 shapes = ButtonGroupDefaults.connectedLeadingButtonShapes(),
                                 modifier = Modifier.weight(1f),
                             ) { Text("Current checkout") }
                             ToggleButton(
                                 checked = state.workspace == WorkspaceMode.Worktree,
-                                onCheckedChange = { callbacks.onWorkspace(WorkspaceMode.Worktree) },
+                                onCheckedChange = { haptics.tick(); callbacks.onWorkspace(WorkspaceMode.Worktree) },
                                 shapes = ButtonGroupDefaults.connectedTrailingButtonShapes(),
                                 modifier = Modifier.weight(1f),
                             ) { Text("New worktree") }
@@ -210,13 +212,13 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
     if (projectSheet) {
         ProjectSheet(
             state,
-            onPick = { projectSheet = false; callbacks.onSelectProject(it) },
+            onPick = { haptics.tick(); projectSheet = false; callbacks.onSelectProject(it) },
             onAdd = { projectSheet = false; addProject = true },
             onDismiss = { projectSheet = false },
         )
     }
     if (branchSheet) {
-        BranchSheet(state, onPick = { branchSheet = false; callbacks.onBranch(it) }, onDismiss = { branchSheet = false })
+        BranchSheet(state, onPick = { haptics.tick(); branchSheet = false; callbacks.onBranch(it) }, onDismiss = { branchSheet = false })
     }
     if (pickerOpen) {
         ModelPickerSheet(

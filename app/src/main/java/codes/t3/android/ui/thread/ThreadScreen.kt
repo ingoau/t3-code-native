@@ -1,5 +1,6 @@
 package codes.t3.android.ui.thread
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -158,6 +159,15 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
     val picker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(6),
     ) { uris -> if (uris.isNotEmpty()) callbacks.onPickImages(uris) }
+
+    // A satisfying tap when the agent finishes a turn.
+    val haptics = rememberHaptics()
+    val working = state.shell?.isWorking == true || detail.activeRun != null
+    var wasWorking by remember { mutableStateOf(working) }
+    LaunchedEffect(working) {
+        if (wasWorking && !working && detail.loaded) haptics.confirm()
+        wasWorking = working
+    }
 
     // Keep following new content while the user is at the bottom.
     LaunchedEffect(feed.firstOrNull()?.key, feed.size) { if (atBottom) listState.animateScrollToItem(0) }

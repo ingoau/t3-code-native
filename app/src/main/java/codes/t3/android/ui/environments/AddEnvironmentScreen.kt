@@ -1,5 +1,6 @@
 package codes.t3.android.ui.environments
 
+import codes.t3.android.ui.components.rememberHaptics
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -82,6 +83,9 @@ fun AddEnvironmentScreen(
         if (granted) scanning = true else scanError = "Camera access was denied. You can still enter the address and code below."
     }
     val target = Pairing.manual(address, code)
+    val haptics = rememberHaptics()
+    // Success pops this screen; an error arriving means pairing failed.
+    androidx.compose.runtime.LaunchedEffect(error) { if (error != null) haptics.reject() }
     val valid = target?.token != null
 
     Scaffold(
@@ -117,11 +121,13 @@ fun AddEnvironmentScreen(
                             onScanned = { raw ->
                                 val parsed = Pairing.parse(raw)
                                 if (parsed?.token != null) {
+                                    haptics.confirm()
                                     scanning = false
                                     address = parsed.httpBaseUrl.substringAfter("://").trimEnd('/')
                                     code = parsed.token
                                     onConnect(parsed)
                                 } else {
+                                    haptics.reject()
                                     scanError = "Scanned QR code was not recognized as a T3 Code pairing link."
                                 }
                             },
@@ -207,7 +213,7 @@ fun AddEnvironmentScreen(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             )
             Button(
-                onClick = { target?.let(onConnect) },
+                onClick = { haptics.contextClick(); target?.let(onConnect) },
                 enabled = valid && !connecting,
                 contentPadding = ButtonDefaults.MediumContentPadding,
                 modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),

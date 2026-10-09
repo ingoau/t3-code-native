@@ -1,5 +1,6 @@
 package codes.t3.android.ui.thread
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,7 @@ fun ModelPickerSheet(
     onDismiss: () -> Unit,
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val haptics = rememberHaptics()
     var query by remember { mutableStateOf("") }
     var current by remember { mutableStateOf(selection) }
     var runtime by remember { mutableStateOf(runtimeMode) }
@@ -71,7 +73,7 @@ fun ModelPickerSheet(
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Model & settings", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            Button(onClick = { current?.let { onConfirm(it, runtime) } ?: onDismiss() }, enabled = current != null) { Text("Done") }
+            Button(onClick = { haptics.confirm(); current?.let { onConfirm(it, runtime) } ?: onDismiss() }, enabled = current != null) { Text("Done") }
         }
         TextField(
             value = query,
@@ -115,6 +117,7 @@ fun ModelPickerSheet(
                 items(models, key = { "m-${provider.instanceId}-${it.slug}" }) { model ->
                     val selected = current?.instanceId == provider.instanceId && current?.model == model.slug
                     ModelRow(model, selected) {
+                        haptics.tick()
                         current = if (selected) current else ModelSelection(provider.instanceId, model.slug, carryOptions(current, model))
                         if (provider.supportedRuntimeModes != null && runtime.wire !in provider.supportedRuntimeModes) {
                             runtime = RuntimeMode.entries.first { it.wire in provider.supportedRuntimeModes }
@@ -128,14 +131,17 @@ fun ModelPickerSheet(
             if (sel != null && descriptors.isNotEmpty()) {
                 item(key = "options-h") { SheetSection("Options") }
                 items(descriptors, key = { "o-${it.id}" }) { d ->
-                    OptionRow(d, sel) { value -> current = sel.withOption(d.id, value) }
+                    OptionRow(d, sel) { value ->
+                        if (d.type == "boolean") haptics.toggle(value.content == "true") else haptics.tick()
+                        current = sel.withOption(d.id, value)
+                    }
                 }
             }
             item(key = "runtime-h") { SheetSection("Runtime") }
             val provider = usable.firstOrNull { it.instanceId == current?.instanceId }
             items(RuntimeMode.entries.filter { provider?.supportedRuntimeModes == null || it.wire in provider.supportedRuntimeModes }, key = { "r-${it.name}" }) { m ->
                 ListItem(
-                    modifier = Modifier.padding(horizontal = 12.dp).clip(RoundedCornerShape(20.dp)).clickable { runtime = m },
+                    modifier = Modifier.padding(horizontal = 12.dp).clip(RoundedCornerShape(20.dp)).clickable { haptics.tick(); runtime = m },
                     leadingContent = { RadioButton(selected = runtime == m, onClick = null) },
                     headlineContent = { Text(m.label) },
                     supportingContent = { Text(m.description) },

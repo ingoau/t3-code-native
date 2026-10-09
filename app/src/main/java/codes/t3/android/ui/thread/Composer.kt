@@ -1,5 +1,6 @@
 package codes.t3.android.ui.thread
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -123,6 +124,7 @@ fun Composer(
     onRemoveAttachment: (String) -> Unit = {},
 ) {
     val haptics = LocalHapticFeedback.current
+    val h = rememberHaptics()
     val uploading = attachments.any { it.uploading }
     val canSend = (text.isNotBlank() || attachments.any { it.ref != null }) && model.enabled && !uploading
     val sendMode = if (model.running) model.defaultFollowUp else SendMode.Send
@@ -138,7 +140,7 @@ fun Composer(
     ) {
         Column(Modifier.padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
             leading?.invoke()
-            if (attachments.isNotEmpty()) AttachmentStrip(attachments, onRemoveAttachment)
+            if (attachments.isNotEmpty()) AttachmentStrip(attachments) { h.tick(); onRemoveAttachment(it) }
             Box(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 if (text.isEmpty()) {
                     Text(model.placeholder, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -167,18 +169,18 @@ fun Composer(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (onAddAttachment != null) {
-                        ToolbarChip(Icons.Rounded.Add, null, false, onAddAttachment, contentDescription = "Add image")
+                        ToolbarChip(Icons.Rounded.Add, null, false, { h.contextClick(); onAddAttachment() }, contentDescription = "Add image")
                     }
-                    ModelPill(model, onOpenModelPicker, Modifier.weight(1f, fill = false))
+                    ModelPill(model, { h.contextClick(); onOpenModelPicker() }, Modifier.weight(1f, fill = false))
                     if (onTogglePlan != null) {
                         ToolbarChip(
                             icon = if (model.planMode) Icons.Rounded.Lightbulb else Icons.Rounded.Construction,
                             label = if (model.planMode) "Plan" else "Build",
                             selected = model.planMode,
-                            onClick = onTogglePlan,
+                            onClick = { h.toggle(!model.planMode); onTogglePlan() },
                         )
                     }
-                    RuntimeChip(model.runtimeMode, model.provider()?.supportedRuntimeModes, onRuntimeMode)
+                    RuntimeChip(model.runtimeMode, model.provider()?.supportedRuntimeModes) { h.tick(); onRuntimeMode(it) }
                 }
                 AnimatedVisibility(model.running && model.canStop, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
                     FilledTonalIconButton(
@@ -197,6 +199,7 @@ fun Composer(
 @Composable
 private fun SendButton(mode: SendMode, enabled: Boolean, running: Boolean, label: String?, onSend: (SendMode) -> Unit) {
     var menu by remember { mutableStateOf(false) }
+    val haptic = rememberHaptics()
     val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     // Expressive shape morph: the round button squares off while pressed.
@@ -220,7 +223,7 @@ private fun SendButton(mode: SendMode, enabled: Boolean, running: Boolean, label
                     indication = androidx.compose.material3.ripple(),
                     enabled = enabled,
                     onClick = { onSend(mode) },
-                    onLongClick = if (running) ({ menu = true }) else null,
+                    onLongClick = if (running) ({ menu = true; haptic.longPress() }) else null,
                 ),
         ) {
             Box(contentAlignment = Alignment.Center) {
@@ -294,8 +297,9 @@ fun ToolbarChip(icon: ImageVector, label: String?, selected: Boolean, onClick: (
 @Composable
 private fun RuntimeChip(mode: RuntimeMode, supported: List<String>?, onChange: (RuntimeMode) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    val haptic = rememberHaptics()
     Box {
-        ToolbarChip(mode.icon(), null, mode == RuntimeMode.Supervised, { open = true }, contentDescription = "Runtime: ${mode.label}")
+        ToolbarChip(mode.icon(), null, mode == RuntimeMode.Supervised, { haptic.contextClick(); open = true }, contentDescription = "Runtime: ${mode.label}")
         DropdownMenu(open, onDismissRequest = { open = false }, shape = RoundedCornerShape(20.dp)) {
             RuntimeMode.entries.filter { supported == null || it.wire in supported }.forEach { m ->
                 DropdownMenuItem(

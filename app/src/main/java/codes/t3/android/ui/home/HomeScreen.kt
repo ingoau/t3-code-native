@@ -1,5 +1,6 @@
 package codes.t3.android.ui.home
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -155,6 +156,7 @@ fun HomeScreen(
     var renaming by remember { mutableStateOf<ThreadEntry?>(null) }
     var deleting by remember { mutableStateOf<ThreadEntry?>(null) }
     var refreshing by remember { mutableStateOf(false) }
+    val haptics = rememberHaptics()
     LaunchedEffect(refreshing) { if (refreshing) { kotlinx.coroutines.delay(900); refreshing = false } }
 
     val listState = rememberLazyListState()
@@ -243,7 +245,7 @@ fun HomeScreen(
                 empty()
                 return@Surface
             }
-            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refreshing = true; onRefresh() }) {
+            PullToRefreshBox(isRefreshing = refreshing, onRefresh = { refreshing = true; haptics.threshold(); onRefresh() }) {
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(top = 8.dp, bottom = 112.dp + padding.calculateBottomPadding()),
@@ -260,14 +262,14 @@ fun HomeScreen(
                                 item {
                                     FilterChip(
                                         selected = projectFilter == null,
-                                        onClick = { projectFilter = null },
+                                        onClick = { projectFilter = null; haptics.tick() },
                                         label = { Text("All projects") },
                                     )
                                 }
                                 items(projectOptions, key = { it.project.id }) { p ->
                                     FilterChip(
                                         selected = projectFilter == p.project.id,
-                                        onClick = { projectFilter = if (projectFilter == p.project.id) null else p.project.id },
+                                        onClick = { projectFilter = if (projectFilter == p.project.id) null else p.project.id; haptics.tick() },
                                         label = { Text(p.project.title) },
                                         leadingIcon = if (projectFilter == p.project.id) {
                                             { Icon(Icons.Rounded.FolderOpen, null, Modifier.size(FilterChipDefaults.IconSize)) }
@@ -293,7 +295,7 @@ fun HomeScreen(
                     threadGroup(if (pinned.isEmpty()) null else "Active", active, state.environments.size > 1, onOpenThread, onThreadAction, { renaming = it }, { deleting = it })
                     if (state.showSettled && settled.isNotEmpty()) {
                         item(key = "settled-header") {
-                            ShelfHeader("Settled", settled.size, settledExpanded) { settledExpanded = !settledExpanded }
+                            ShelfHeader("Settled", settled.size, settledExpanded) { settledExpanded = !settledExpanded; haptics.tick() }
                         }
                         if (settledExpanded) {
                             threadGroup(null, settled, state.environments.size > 1, onOpenThread, onThreadAction, { renaming = it }, { deleting = it }, settledGroup = true)
@@ -316,7 +318,7 @@ fun HomeScreen(
             title = { Text("Delete thread?") },
             text = { Text("“${entry.thread.title}” will be permanently deleted, including its terminal history.") },
             confirmButton = {
-                TextButton(onClick = { onThreadAction(entry, ThreadAction.Delete); deleting = null }) {
+                TextButton(onClick = { haptics.reject(); onThreadAction(entry, ThreadAction.Delete); deleting = null }) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
@@ -462,7 +464,10 @@ private fun SwipeableThreadRow(
     onDelete: (ThreadEntry) -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
+    val h = rememberHaptics()
     val swipe = rememberSwipeToDismissBoxState()
+    // Tick as the swipe crosses the point where releasing will commit.
+    LaunchedEffect(swipe.targetValue) { if (swipe.targetValue != SwipeToDismissBoxValue.Settled) h.threshold() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val primaryAction = if (settled) ThreadAction.Unsettle else ThreadAction.Settle
     SwipeToDismissBox(
@@ -530,6 +535,7 @@ fun ThreadRow(
     val badge = thread.badge()
     var menu by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
+    val h = rememberHaptics()
     Surface(
         shape = shape,
         color = if (settled) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceContainer,
@@ -612,7 +618,7 @@ fun ThreadRow(
                 }
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = RoundedCornerShape(20.dp)) {
-                fun act(a: ThreadAction) { menu = false; onAction(entry, a) }
+                fun act(a: ThreadAction) { menu = false; h.contextClick(); onAction(entry, a) }
                 DropdownMenuItem(
                     text = { Text(if (thread.isPinned) "Unpin" else "Pin") },
                     leadingIcon = { Icon(Icons.Rounded.PushPin, null) },

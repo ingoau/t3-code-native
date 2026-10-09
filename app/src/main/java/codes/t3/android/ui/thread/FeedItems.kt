@@ -1,5 +1,6 @@
 package codes.t3.android.ui.thread
 
+import codes.t3.android.ui.components.rememberHaptics
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
@@ -175,9 +176,10 @@ private fun IntentBadge(text: String, color: Color) {
 
 @Composable
 private fun CopyButton(text: String, onCopy: () -> Unit) {
+    val haptics = rememberHaptics()
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) { if (copied) { delay(1500); copied = false } }
-    IconButton(onClick = { onCopy(); copied = true }, modifier = Modifier.size(36.dp)) {
+    IconButton(onClick = { onCopy(); copied = true; haptics.confirm() }, modifier = Modifier.size(36.dp)) {
         Icon(
             if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
             if (copied) "Copied" else "Copy",
@@ -261,6 +263,7 @@ fun WorkGroup(entry: FeedEntry.Work, modifier: Modifier = Modifier, actions: Fee
     val items = entry.items
     val single = items.size == 1
     var expanded by rememberSaveable(entry.key) { mutableStateOf(false) }
+    val haptics = rememberHaptics()
     val running = items.lastOrNull { it.isRunning }
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
         if (single) {
@@ -271,7 +274,7 @@ fun WorkGroup(entry: FeedEntry.Work, modifier: Modifier = Modifier, actions: Fee
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .clickable { expanded = !expanded }
+                    .clickable { expanded = !expanded; haptics.tick() }
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -312,6 +315,7 @@ private fun groupIconItem(items: List<TurnItem>): TurnItem =
 @Composable
 fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
+    val haptics = rememberHaptics()
     var full by remember(item.id) { mutableStateOf<TurnItem?>(null) }
     LaunchedEffect(expanded, item.outputOmitted) {
         if (expanded && item.outputOmitted && full == null) full = runCatching { actions.loadFullItem(item.id) }.getOrNull()
@@ -324,7 +328,7 @@ fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .clickable(enabled = hasDetail) { expanded = !expanded }
+                .clickable(enabled = hasDetail) { expanded = !expanded; haptics.tick() }
                 .padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -443,12 +447,13 @@ fun DiffStat(additions: Int?, deletions: Int?) {
 @Composable
 fun FoldRow(entry: FeedEntry.Fold, wrapCode: Boolean, actions: FeedActions, modifier: Modifier = Modifier) {
     var expanded by rememberSaveable(entry.key) { mutableStateOf(false) }
+    val haptics = rememberHaptics()
     val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "fold")
     Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
         Row(
             Modifier
                 .clip(CircleShape)
-                .clickable { expanded = !expanded }
+                .clickable { expanded = !expanded; haptics.tick() }
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -488,7 +493,8 @@ fun PlanCard(item: TurnItem, actions: FeedActions, modifier: Modifier = Modifier
             T3Markdown(item.text)
             if (!item.streaming) {
                 Spacer(Modifier.size(12.dp))
-                Button(onClick = { actions.onImplementPlan(item) }) { Text("Implement plan") }
+                val haptics = rememberHaptics()
+                Button(onClick = { haptics.confirm(); actions.onImplementPlan(item) }) { Text("Implement plan") }
             }
         }
     }
@@ -554,13 +560,14 @@ fun CheckpointCard(item: TurnItem, modifier: Modifier = Modifier, onViewDiff: ((
     val files = item.arr("files").orEmpty().mapNotNull { it as? JsonObject }
     if (files.isEmpty()) return
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
+    val haptics = rememberHaptics()
     val adds = files.sumOf { (it["additions"] as? JsonPrimitive)?.intOrNull ?: 0 }
     val dels = files.sumOf { (it["deletions"] as? JsonPrimitive)?.intOrNull ?: 0 }
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        onClick = { expanded = !expanded },
+        onClick = { expanded = !expanded; haptics.tick() },
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp).animateContentSize()) {
             Row(verticalAlignment = Alignment.CenterVertically) {

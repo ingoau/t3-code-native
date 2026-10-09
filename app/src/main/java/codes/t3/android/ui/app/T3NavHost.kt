@@ -202,12 +202,13 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                 val route = entry.toRoute<AddEnvironmentRoute>()
                 val pairing by app.pairing.collectAsStateWithLifecycle()
                 DisposableEffect(Unit) { onDispose { app.clearPairingError() } }
+                val haptics = codes.t3.android.ui.components.rememberHaptics()
                 AddEnvironmentScreen(
                     initialLink = route.link,
                     connecting = pairing.first,
                     error = pairing.second,
                     onBack = { nav.popBackStack() },
-                    onConnect = { target -> app.pair(target) { nav.popBackStack(HomeRoute, inclusive = false) } },
+                    onConnect = { target -> app.pair(target) { haptics.confirm(); nav.popBackStack(HomeRoute, inclusive = false) } },
                 )
             }
             composable<DiffRoute> { entry ->
