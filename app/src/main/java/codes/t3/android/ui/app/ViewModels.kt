@@ -53,6 +53,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import java.util.UUID
+import androidx.compose.ui.graphics.asImageBitmap
 
 /** User-visible one-off messages (snackbars). */
 object UiEvents {
@@ -153,7 +154,9 @@ class ThreadViewModel(
     private val status: Flow<ConnectionStatus> = connection.flatMapLatest { it?.status ?: flowOf(ConnectionStatus.Disabled) }
     private val config: Flow<ServerConfig?> = connection.flatMapLatest { it?.config ?: flowOf(null) }
 
-    val state: StateFlow<ThreadUiState?> = combine(detail, shellEntry, status, config, settingsRepo.settings) { detail, (shell, projects), status, config, settings ->
+    val tray = AttachmentTray(viewModelScope, repository)
+
+    private val baseState: Flow<ThreadUiState> = combine(detail, shellEntry, status, config, settingsRepo.settings) { detail, (shell, projects), status, config, settings ->
         val thread = shell ?: detail.thread
         val project = thread?.projectId?.let { projects[it] }
         val envLabel = repository.connection(environmentId)?.environment?.label ?: "environment"
@@ -181,8 +184,19 @@ class ThreadViewModel(
             wrapCode = settings.wrapCode,
             enterToSend = settings.enterToSend,
             showPlanToggle = thread?.interactionMode == "plan" || (settings.legacyPlanMode && provider?.showInteractionModeToggle == true),
+            canAttach = config?.environment?.capability("attachmentUploads") == true,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    }
+
+    val state: StateFlow<ThreadUiState?> = combine(baseState, tray.items) { s, items -> s.copy(attachments = items) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun addImages(resolver: android.content.ContentResolver, uris: List<android.net.Uri>) = tray.add(environmentId, resolver, uris)
+
+    suspend fun loadImage(attachment: JsonObject): androidx.compose.ui.graphics.ImageBitmap? {
+        val conn = repository.connection(environmentId) ?: return null
+        return codes.t3.android.data.Attachments.download(conn, repository.http, attachment)?.asImageBitmap()
+    }
 
     private val serverResolves: Boolean
         get() = repository.connection(environmentId)?.config?.value?.environment?.capability("serverResolvedCommandContext") == true
@@ -201,8 +215,9 @@ class ThreadViewModel(
     }
 
     fun send(text: String, mode: SendMode, sourcePlan: Pair<String, String>? = null) {
-        if (text.isBlank()) return
         val s = state.value ?: return
+        if (text.isBlank() && s.attachments.none { it.ref != null }) return
+        if (!tray.ready) return UiEvents.show("Wait for images to finish uploading")
         when (text.trim().lowercase()) {
             "/plan" -> return dispatch("switch to plan mode", Commands.setInteractionMode(threadId, "plan"))
             "/default", "/build" -> return dispatch("switch to default mode", Commands.setInteractionMode(threadId, "default"))
@@ -213,7 +228,7 @@ class ThreadViewModel(
             mode == SendMode.Steer -> Commands.DispatchMode.Steer(runId)
             else -> Commands.DispatchMode.Queue
         }
-        dispatch("send message", Commands.sendMessage(threadId, text, s.composer.selection, dispatchMode, serverResolves, sourcePlan = sourcePlan))
+        dispatch("send message", Commands.sendMessage(threadId, text, s.composer.selection, dispatchMode, serverResolves, attachments = tray.take(), sourcePlan = sourcePlan))
     }
 
     fun stop() {
@@ -221,6 +236,13 @@ class ThreadViewModel(
         val runId = s.shell?.activeRunId ?: s.detail.activeRun?.id ?: return
         dispatch("stop the agent", Commands.interrupt(threadId, runId))
     }
+
+    fun cancelQueued(runId: String) = dispatch("remove queued message", Commands.cancelQueued(threadId, runId))
+    fun steerQueued(runId: String) {
+        val target = state.value?.detail?.activeRun?.id ?: return
+        dispatch("steer", Commands.promoteToSteer(threadId, runId, target))
+    }
+    fun resumeQueue() = dispatch("resume queue", Commands.resumeQueue(threadId))
 
     fun respondApproval(requestId: String, decision: String) = dispatch("respond", Commands.respondApproval(threadId, requestId, decision))
 
@@ -301,7 +323,9 @@ class NewThreadViewModel(
         )
     }
 
-    val state: StateFlow<NewThreadUiState?> = combine(repository.projects, configs, local, repository.savedEnvironments, settingsRepo.settings) { projects, configs, l, saved, settings ->
+    val tray = AttachmentTray(viewModelScope, repository)
+
+    private val baseState: Flow<NewThreadUiState> = combine(repository.projects, configs, local, repository.savedEnvironments, settingsRepo.settings) { projects, configs, l, saved, settings ->
         val sorted = projects.sortedByDescending { it.project.updatedAt }
         val selected = l.key?.let { (e, p) -> sorted.firstOrNull { it.environmentId == e && it.project.id == p } }
             ?: sorted.firstOrNull { it.project.id == preferredProjectId && (preferredEnvironmentId == null || it.environmentId == preferredEnvironmentId) }
@@ -328,8 +352,17 @@ class NewThreadViewModel(
             isRepo = l.isRepo,
             starting = l.starting,
             error = l.error,
+            canAttach = config?.environment?.capability("attachmentUploads") == true,
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    }
+
+    val state: StateFlow<NewThreadUiState?> = combine(baseState, tray.items) { s, items -> s.copy(attachments = items) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun addImages(resolver: android.content.ContentResolver, uris: List<android.net.Uri>) {
+        val env = state.value?.selected?.environmentId ?: return
+        tray.add(env, resolver, uris)
+    }
 
     fun selectProject(entry: ProjectEntry) {
         selectedKey.value = entry.environmentId to entry.project.id
@@ -396,7 +429,8 @@ class NewThreadViewModel(
         val s = state.value ?: return
         val selected = s.selected ?: return
         val selection = s.composer.selection ?: return UiEvents.show("Choose a model first. Set up a provider on the host if none are listed.")
-        if (text.isBlank() || starting.value) return
+        if ((text.isBlank() && s.attachments.none { it.ref != null }) || starting.value) return
+        if (!tray.ready) return UiEvents.show("Wait for images to finish uploading")
         if (text.trim().lowercase() == "/plan") { plan.value = true; return }
         if (text.trim().lowercase() in setOf("/default", "/build")) { plan.value = false; return }
         val conn = repository.connection(selected.environmentId) ?: return UiEvents.show("Environment is not connected")
@@ -414,6 +448,7 @@ class NewThreadViewModel(
                     Commands.launchThread(
                         threadId, selected.project.id, text, selection, s.composer.runtimeMode.wire,
                         if (s.composer.planMode) "plan" else "default", workspaceStrategy,
+                        attachments = tray.take(),
                     ),
                 )
             }.onSuccess { result ->

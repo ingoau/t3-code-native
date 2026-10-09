@@ -32,6 +32,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.FormatListNumbered
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -99,6 +102,8 @@ data class ThreadUiState(
     val wrapCode: Boolean = false,
     val enterToSend: Boolean = false,
     val showPlanToggle: Boolean = false,
+    val attachments: List<codes.t3.android.ui.app.PendingAttachment> = emptyList(),
+    val canAttach: Boolean = false,
 )
 
 class ThreadCallbacks(
@@ -115,6 +120,12 @@ class ThreadCallbacks(
     val onImplementPlan: (TurnItem) -> Unit = {},
     val loadFullItem: suspend (String) -> TurnItem? = { null },
     val onReconnect: () -> Unit = {},
+    val onPickImages: (List<android.net.Uri>) -> Unit = {},
+    val onRemoveAttachment: (String) -> Unit = {},
+    val onCancelQueued: (String) -> Unit = {},
+    val onSteerQueued: (String) -> Unit = {},
+    val onResumeQueue: () -> Unit = {},
+    val loadImage: suspend (kotlinx.serialization.json.JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
 )
 
 @Composable
@@ -131,7 +142,10 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
     val atBottom by remember { derivedStateOf { listState.firstVisibleItemIndex <= 1 } }
     val approvals = detail.pendingApprovals
     val question = detail.pendingUserInput
-    val actions = remember(callbacks) { FeedActions(onImplementPlan = callbacks.onImplementPlan, loadFullItem = callbacks.loadFullItem) }
+    val actions = remember(callbacks) { FeedActions(onImplementPlan = callbacks.onImplementPlan, loadFullItem = callbacks.loadFullItem, loadImage = callbacks.loadImage) }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(6),
+    ) { uris -> if (uris.isNotEmpty()) callbacks.onPickImages(uris) }
 
     // Keep following new content while the user is at the bottom.
     LaunchedEffect(feed.firstOrNull()?.key, feed.size) { if (atBottom) listState.animateScrollToItem(0) }
@@ -189,6 +203,9 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                     Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 10.dp, end = 10.dp, bottom = 8.dp, top = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    AnimatedVisibility(detail.queued.isNotEmpty(), enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+                        QueueCard(detail, canSteer = detail.activeRun != null, callbacks)
+                    }
                     AnimatedVisibility(approvals.isNotEmpty(), enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
                         approvals.firstOrNull()?.let { a -> ApprovalCard(a, onDecision = { callbacks.onApproval(a.requestId, it) }) }
                     }
@@ -209,6 +226,11 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                             onTogglePlan = if (state.showPlanToggle) callbacks.onTogglePlan else null,
                             onRuntimeMode = callbacks.onRuntimeMode,
                             enterToSend = state.enterToSend,
+                            attachments = state.attachments,
+                            onAddAttachment = if (state.canAttach) ({
+                                picker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            }) else null,
+                            onRemoveAttachment = callbacks.onRemoveAttachment,
                         )
                     }
                 }
@@ -341,6 +363,38 @@ private fun StatusPill(
         AnimatedVisibility(showScrollDown, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
             SmallFloatingActionButton(onClick = onScrollDown, containerColor = MaterialTheme.colorScheme.secondaryContainer) {
                 Icon(Icons.Rounded.KeyboardArrowDown, "Scroll to latest")
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueueCard(detail: ThreadState, canSteer: Boolean, callbacks: ThreadCallbacks) {
+    val held = detail.queuedRuns.any { it.queueHeld == true }
+    Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+        Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.FormatListNumbered, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (held) "Queue paused" else "Queued · runs after the current turn",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                if (held) TextButton(onClick = callbacks.onResumeQueue) { Text("Resume") }
+            }
+            detail.queued.forEach { (run, message) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        message?.text?.ifBlank { null } ?: if ((message?.attachments?.size ?: 0) > 0) "Attachments" else "Queued message",
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+                    )
+                    if (canSteer) IconButton(onClick = { callbacks.onSteerQueued(run.id) }) { Icon(Icons.Rounded.Bolt, "Steer now") }
+                    IconButton(onClick = { callbacks.onCancelQueued(run.id) }) { Icon(Icons.Rounded.Close, "Remove from queue") }
+                }
             }
         }
     }

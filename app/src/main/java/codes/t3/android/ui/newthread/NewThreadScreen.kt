@@ -90,6 +90,8 @@ data class NewThreadUiState(
     val isRepo: Boolean = true,
     val starting: Boolean = false,
     val error: String? = null,
+    val attachments: List<codes.t3.android.ui.app.PendingAttachment> = emptyList(),
+    val canAttach: Boolean = false,
 )
 
 class NewThreadCallbacks(
@@ -103,6 +105,8 @@ class NewThreadCallbacks(
     val onRuntimeMode: (RuntimeMode) -> Unit = {},
     val onTogglePlan: () -> Unit = {},
     val onStart: (String) -> Unit = {},
+    val onPickImages: (List<android.net.Uri>) -> Unit = {},
+    val onRemoveAttachment: (String) -> Unit = {},
 )
 
 @Composable
@@ -113,6 +117,9 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
     var pickerOpen by remember { mutableStateOf(false) }
     var addProject by remember { mutableStateOf(false) }
     LaunchedEffect(state.selected?.project?.id) { if (state.selected != null) callbacks.onLoadBranches() }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia(6),
+    ) { uris -> if (uris.isNotEmpty()) callbacks.onPickImages(uris) }
 
     Scaffold(
         topBar = {
@@ -188,6 +195,11 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
                         onRuntimeMode = callbacks.onRuntimeMode,
                         enterToSend = false,
                         sendLabel = "Start task",
+                        attachments = state.attachments,
+                        onAddAttachment = if (state.canAttach) ({
+                            picker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }) else null,
+                        onRemoveAttachment = callbacks.onRemoveAttachment,
                     )
                     if (state.starting) LoadingIndicator(Modifier.align(Alignment.TopCenter).padding(top = 4.dp))
                 }

@@ -101,6 +101,7 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                     ThreadViewModel(app.repository, settingsRepo, route.environmentId, route.threadId)
                 }
                 val state by vm.state.collectAsStateWithLifecycle()
+                val context = androidx.compose.ui.platform.LocalContext.current
                 LaunchedEffect(Unit) { vm.markVisited() }
                 DisposableEffect(Unit) { onDispose { vm.markVisited() } }
                 state?.let { s ->
@@ -125,6 +126,12 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                                 onImplementPlan = vm::implementPlan,
                                 loadFullItem = vm::loadFullItem,
                                 onReconnect = { vm.reconnect() },
+                                onPickImages = { uris -> vm.addImages(context.contentResolver, uris) },
+                                onRemoveAttachment = vm.tray::remove,
+                                loadImage = vm::loadImage,
+                                onCancelQueued = vm::cancelQueued,
+                                onSteerQueued = vm::steerQueued,
+                                onResumeQueue = vm::resumeQueue,
                             )
                         },
                     )
@@ -134,6 +141,7 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                 val route = entry.toRoute<NewThreadRoute>()
                 val vm: NewThreadViewModel = viewModel { NewThreadViewModel(app.repository, settingsRepo, route.projectId, route.environmentId) }
                 val state by vm.state.collectAsStateWithLifecycle()
+                val context = androidx.compose.ui.platform.LocalContext.current
                 state?.let { s ->
                     NewThreadScreen(
                         s,
@@ -148,6 +156,8 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                                 onModelChange = vm::setModel,
                                 onRuntimeMode = vm::setRuntime,
                                 onTogglePlan = vm::togglePlan,
+                                onPickImages = { uris -> vm.addImages(context.contentResolver, uris) },
+                                onRemoveAttachment = vm.tray::remove,
                                 onStart = { text ->
                                     vm.start(text) { envId, threadId ->
                                         nav.navigate(ThreadRoute(envId, threadId)) { popUpTo<NewThreadRoute> { inclusive = true } }

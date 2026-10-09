@@ -93,12 +93,13 @@ import kotlinx.serialization.json.intOrNull
 data class FeedActions(
     val onImplementPlan: (TurnItem) -> Unit = {},
     val loadFullItem: suspend (String) -> TurnItem? = { null },
+    val loadImage: suspend (JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
 )
 
 @Composable
 fun FeedRow(entry: FeedEntry, wrapCode: Boolean, actions: FeedActions, modifier: Modifier = Modifier) {
     when (entry) {
-        is FeedEntry.User -> UserBubble(entry.item, modifier)
+        is FeedEntry.User -> UserBubble(entry.item, modifier, actions)
         is FeedEntry.Assistant -> AssistantMessage(entry.item, entry.final, wrapCode, modifier)
         is FeedEntry.Work -> WorkGroup(entry, modifier, actions)
         is FeedEntry.Fold -> FoldRow(entry, wrapCode, actions, modifier)
@@ -114,7 +115,7 @@ fun FeedRow(entry: FeedEntry, wrapCode: Boolean, actions: FeedActions, modifier:
 // ------------------------------------------------------------------ messages
 
 @Composable
-fun UserBubble(item: TurnItem, modifier: Modifier = Modifier) {
+fun UserBubble(item: TurnItem, modifier: Modifier = Modifier, actions: FeedActions = FeedActions()) {
     val clipboard = LocalClipboardManager.current
     Column(modifier.fillMaxWidth().padding(start = 48.dp, end = 12.dp, top = 10.dp, bottom = 2.dp), horizontalAlignment = Alignment.End) {
         Surface(
@@ -123,15 +124,17 @@ fun UserBubble(item: TurnItem, modifier: Modifier = Modifier) {
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         ) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                val count = item.attachments.size
-                if (count > 0) {
-                    Text(
-                        if (count == 1) "1 attachment" else "$count attachments",
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(bottom = 4.dp),
-                    )
+                val images = item.attachments.mapNotNull { it as? JsonObject }.filter { (it["type"] as? JsonPrimitive)?.contentOrNull == "image" }
+                val files = item.attachments.size - images.size
+                if (images.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = if (item.text.isBlank()) 0.dp else 8.dp)) {
+                        images.take(3).forEach { AttachmentThumb(it, actions) }
+                    }
                 }
-                SelectionContainer { Text(item.text, style = MaterialTheme.typography.bodyLarge) }
+                if (files > 0) {
+                    Text(if (files == 1) "1 file" else "$files files", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(bottom = 4.dp))
+                }
+                if (item.text.isNotBlank()) SelectionContainer { Text(item.text, style = MaterialTheme.typography.bodyLarge) }
             }
         }
         Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -145,6 +148,18 @@ fun UserBubble(item: TurnItem, modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             CopyButton(item.text) { clipboard.setText(AnnotatedString(item.text)) }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentThumb(attachment: JsonObject, actions: FeedActions) {
+    val bitmap by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, attachment) {
+        value = runCatching { actions.loadImage(attachment) }.getOrNull()
+    }
+    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.4f), modifier = Modifier.size(width = 120.dp, height = 96.dp)) {
+        bitmap?.let {
+            androidx.compose.foundation.Image(it, (attachment["name"] as? JsonPrimitive)?.contentOrNull, contentScale = androidx.compose.ui.layout.ContentScale.Crop)
         }
     }
 }

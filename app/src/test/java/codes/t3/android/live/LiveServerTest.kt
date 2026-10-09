@@ -112,6 +112,23 @@ class LiveServerTest {
             println("Timeline after send: " + afterSend.timeline.joinToString { "${it.type}[${it.status}]" })
             assertTrue(afterSend.timeline.any { it.type == "user_message" && it.text == "hello from the native client" })
 
+            // Image attachment round trip: upload → attach to a message → download through a signed URL.
+            val bmp = android.graphics.Bitmap.createBitmap(64, 48, android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.MAGENTA) }
+            val png = java.io.ByteArrayOutputStream().also { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+            val ref = codes.t3.android.data.Attachments.upload(conn, repo.http, codes.t3.android.data.PreparedImage("pixel.png", "image/png", png, bmp))
+            val sendRes = conn.dispatch(Commands.sendMessage(threadId, "see attached", null, Commands.DispatchMode.StartImmediately, true, attachments = kotlinx.serialization.json.JsonArray(listOf(ref))))
+            println("Attach send: $sendRes")
+            // The first run can't start (broken provider), so this one waits in the queue as a message + queued run.
+            val withImage = withTimeout(10_000) { conn.observeThread(threadId).first { s -> s.queued.any { (_, m) -> m?.attachments?.isNotEmpty() == true } } }
+            println("Queued: " + withImage.queued.map { (r, m) -> "${r.status}:${m?.text}" })
+            val att = withImage.queued.firstNotNullOf { (_, m) -> m?.attachments?.firstOrNull() } as kotlinx.serialization.json.JsonObject
+            val downloaded = codes.t3.android.data.Attachments.download(conn, repo.http, att)
+            println("Attachment round trip: uploaded ${png.size} bytes, downloaded ${downloaded?.width}x${downloaded?.height}")
+            assertEquals(64, downloaded?.width)
+            conn.dispatch(Commands.cancelQueued(threadId, withImage.queued.first().first.id))
+            withTimeout(10_000) { conn.observeThread(threadId).first { it.queued.isEmpty() } }
+            println("Cancelled queued run")
+
             conn.dispatch(Commands.simple("thread.delete", threadId))
             withTimeout(10_000) { conn.shell.first { threadId !in it.threads } }
             println("Deleted thread")

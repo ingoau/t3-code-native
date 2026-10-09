@@ -117,6 +117,11 @@ object Commands {
     fun visit(threadId: String, at: String?) = command("thread.visit", threadId) { put("visitedAt", at ?: Instant.now().toString()) }
     fun rename(threadId: String, title: String) = command("thread.metadata.update", threadId) { put("title", title) }
     fun cancelQueued(threadId: String, runId: String) = command("queued-run.cancel", threadId) { put("runId", runId) }
+    fun promoteToSteer(threadId: String, queuedRunId: String, targetRunId: String) = command("queued-message.promote-to-steer", threadId) {
+        put("queuedRunId", queuedRunId)
+        put("targetRunId", targetRunId)
+    }
+    fun resumeQueue(threadId: String) = command("queue.resume", threadId)
 
     sealed interface Workspace {
         data class Root(val branch: String? = null) : Workspace
@@ -131,6 +136,7 @@ object Commands {
         runtimeMode: String,
         interactionMode: String,
         workspace: Workspace,
+        attachments: JsonArray = JsonArray(emptyList()),
     ) = buildJsonObject {
         put("commandId", newId())
         put("creationSource", "mobile")
@@ -155,7 +161,7 @@ object Commands {
         put("initialMessage", buildJsonObject {
             put("messageId", newId())
             put("text", text)
-            put("attachments", JsonArray(emptyList()))
+            put("attachments", attachments)
         })
     }
 

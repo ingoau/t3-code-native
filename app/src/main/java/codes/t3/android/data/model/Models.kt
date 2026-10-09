@@ -297,6 +297,17 @@ data class RuntimeRequest(
 )
 
 @Serializable
+data class ConversationMessage(
+    val id: String,
+    val runId: String? = null,
+    val role: String = "user",
+    val text: String = "",
+    val attachments: JsonArray = JsonArray(emptyList()),
+    val streaming: Boolean = false,
+    val createdAt: String? = null,
+)
+
+@Serializable
 data class ProjectedTurnItem(
     val position: Int = 0,
     val visibility: String = "local",
@@ -313,6 +324,7 @@ data class ThreadProjection(
     val providerSessions: List<ProviderSession> = emptyList(),
     val providerThreads: List<ProviderThread> = emptyList(),
     val runtimeRequests: List<RuntimeRequest> = emptyList(),
+    val messages: List<ConversationMessage> = emptyList(),
     val turnItems: List<TurnItem> = emptyList(),
     val visibleTurnItems: List<ProjectedTurnItem> = emptyList(),
     val updatedAt: String? = null,

@@ -28,7 +28,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.Construction
 import androidx.compose.material.icons.rounded.FormatListNumbered
@@ -116,9 +118,13 @@ fun Composer(
     modifier: Modifier = Modifier,
     sendLabel: String? = null,
     leading: (@Composable () -> Unit)? = null,
+    attachments: List<codes.t3.android.ui.app.PendingAttachment> = emptyList(),
+    onAddAttachment: (() -> Unit)? = null,
+    onRemoveAttachment: (String) -> Unit = {},
 ) {
     val haptics = LocalHapticFeedback.current
-    val canSend = text.isNotBlank() && model.enabled
+    val uploading = attachments.any { it.uploading }
+    val canSend = (text.isNotBlank() || attachments.any { it.ref != null }) && model.enabled && !uploading
     val sendMode = if (model.running) model.defaultFollowUp else SendMode.Send
     fun send(mode: SendMode) {
         if (!canSend) return
@@ -132,6 +138,7 @@ fun Composer(
     ) {
         Column(Modifier.padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
             leading?.invoke()
+            if (attachments.isNotEmpty()) AttachmentStrip(attachments, onRemoveAttachment)
             Box(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 if (text.isEmpty()) {
                     Text(model.placeholder, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -159,6 +166,9 @@ fun Composer(
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (onAddAttachment != null) {
+                        ToolbarChip(Icons.Rounded.Add, null, false, onAddAttachment, contentDescription = "Add image")
+                    }
                     ModelPill(model, onOpenModelPicker, Modifier.weight(1f, fill = false))
                     if (onTogglePlan != null) {
                         ToolbarChip(
@@ -298,6 +308,39 @@ private fun RuntimeChip(mode: RuntimeMode, supported: List<String>?, onChange: (
                     leadingIcon = { Icon(m.icon(), null, tint = if (m == mode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) },
                     onClick = { open = false; onChange(m) },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttachmentStrip(items: List<codes.t3.android.ui.app.PendingAttachment>, onRemove: (String) -> Unit) {
+    androidx.compose.foundation.lazy.LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+        modifier = Modifier.padding(top = 6.dp),
+    ) {
+        items(items.size, key = { items[it].key }) { i ->
+            val a = items[i]
+            Box(Modifier.size(72.dp)) {
+                Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest, modifier = Modifier.size(72.dp)) {
+                    a.preview?.let {
+                        androidx.compose.foundation.Image(
+                            it, null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.size(72.dp),
+                            alpha = if (a.uploading) 0.5f else 1f,
+                        )
+                    }
+                }
+                if (a.uploading) androidx.compose.material3.LoadingIndicator(Modifier.align(Alignment.Center).size(28.dp))
+                Surface(
+                    onClick = { onRemove(a.key) },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(22.dp),
+                ) { Icon(Icons.Rounded.Close, "Remove image", Modifier.padding(3.dp)) }
             }
         }
     }

@@ -1,6 +1,7 @@
 package codes.t3.android.data.state
 
 import codes.t3.android.data.model.ApprovalOption
+import codes.t3.android.data.model.ConversationMessage
 import codes.t3.android.data.model.PendingApproval
 import codes.t3.android.data.model.PendingUserInput
 import codes.t3.android.data.model.ProviderSession
@@ -33,6 +34,7 @@ data class ThreadState(
     val sessions: Map<String, ProviderSession> = emptyMap(),
     val providerThreads: Map<String, ProviderThread> = emptyMap(),
     val requests: Map<String, RuntimeRequest> = emptyMap(),
+    val messages: Map<String, ConversationMessage> = emptyMap(),
     val items: Map<String, TurnItem> = emptyMap(),
     /** Rows from parent threads (forks) that precede local items. */
     val inherited: List<TurnItem> = emptyList(),
@@ -43,6 +45,9 @@ data class ThreadState(
 
     val activeRun: Run? get() = runs.values.filter { it.status in ActiveRunStatuses }.maxByOrNull { it.ordinal }
     val queuedRuns: List<Run> get() = runs.values.filter { it.status == "queued" }.sortedBy { it.queuePosition ?: it.ordinal }
+
+    /** Follow-ups waiting behind the active run, with their message text (they have no timeline item yet). */
+    val queued: List<Pair<Run, ConversationMessage?>> get() = queuedRuns.map { it to it.userMessageId?.let { id -> messages[id] } }
 
     /** Ordered, visibility-filtered timeline. */
     val timeline: List<TurnItem> by lazy {
@@ -107,6 +112,7 @@ data class ThreadState(
         sessions = projection.providerSessions.associateBy { it.id },
         providerThreads = projection.providerThreads.associateBy { it.id },
         requests = projection.runtimeRequests.associateBy { it.id },
+        messages = projection.messages.associateBy { it.id },
         items = projection.turnItems.associateBy { it.id },
         inherited = projection.visibleTurnItems.filter { it.visibility != "local" }.sortedBy { it.position }.map { it.item },
         synchronized = synchronized,
@@ -160,6 +166,10 @@ data class ThreadState(
             type == "runtime-request.updated" -> {
                 val r = T3Json.decodeFromJsonElement<RuntimeRequest>(payload)
                 copy(requests = requests + (r.id to r))
+            }
+            type == "message.updated" -> {
+                val m = T3Json.decodeFromJsonElement<ConversationMessage>(payload)
+                copy(messages = messages + (m.id to m))
             }
             type == "turn-item.updated" -> {
                 val item = T3Json.decodeFromJsonElement<TurnItem>(payload)
