@@ -22,6 +22,8 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+        // 32-bit x86 is effectively emulator-only and doubles the size of ML Kit's native QR decoder.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
     buildTypes {
