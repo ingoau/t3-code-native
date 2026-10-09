@@ -22,6 +22,7 @@ import com.github.takahirom.roborazzi.RobolectricDeviceQualifiers
 import com.github.takahirom.roborazzi.captureScreenRoboImage
 import org.junit.Assume.assumeTrue
 import org.junit.Before
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -80,7 +81,15 @@ class AppE2ETest {
         captureScreenRoboImage("$dir/03_home_connected.png")
 
         System.getenv("T3_E2E_OPEN_THREAD")?.let { title ->
+            val before = compose.onAllNodesWithText(title).fetchSemanticsNodes().size
+            compose.mainClock.autoAdvance = false
             compose.onAllNodesWithText(title).onFirst().performClick()
+            // A few frames into the page transition the thread page must already have content (its top bar title),
+            // so the shared-axis motion animates the real screen rather than a blank one.
+            compose.mainClock.advanceTimeBy(150)
+            captureScreenRoboImage("$dir/03a_thread_transition.png")
+            assertTrue("thread page blank during its enter transition", compose.onAllNodesWithText(title).fetchSemanticsNodes().size > before)
+            compose.mainClock.autoAdvance = true
             compose.waitUntil(20_000) { compose.onAllNodesWithText("Opening thread…").fetchSemanticsNodes().isEmpty() }
             compose.mainClock.advanceTimeBy(1_500)
             captureScreenRoboImage("$dir/03b_thread.png")
@@ -101,7 +110,14 @@ class AppE2ETest {
         compose.mainClock.advanceTimeBy(600)
         val newThread = hasText("New thread") or hasContentDescription("New thread")
         compose.waitUntilAtLeastOneExists(newThread, 10_000)
+        compose.mainClock.autoAdvance = false
         compose.onAllNodes(newThread).onFirst().performClick()
+        compose.mainClock.advanceTimeBy(150)
+        assertTrue(
+            "new thread page blank during its enter transition",
+            compose.onAllNodesWithText("What should the agent work on?").fetchSemanticsNodes().isNotEmpty(),
+        )
+        compose.mainClock.autoAdvance = true
         waitForText("What should the agent work on?")
         // Branches load from the real repository via vcs.listRefs.
         compose.waitUntil(15_000) { compose.onAllNodesWithText("Loading branches…").fetchSemanticsNodes().isEmpty() }

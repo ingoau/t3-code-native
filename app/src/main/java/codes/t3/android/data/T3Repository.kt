@@ -117,6 +117,11 @@ class T3Repository(
         }) { lists -> lists.flatMap { it } }
     }
 
+    /** [projects] as of right now, for building a screen's first frame without waiting on the flow. */
+    fun currentProjects(): List<ProjectEntry> = _connections.value.values.flatMap { conn ->
+        conn.shell.value.projects.values.map { ProjectEntry(conn.environmentId, conn.environment.label, it) }
+    }
+
     /** Validate, exchange the one-time code, and save. Returns the saved environment. */
     suspend fun pair(target: PairingTarget): SavedEnvironment {
         val token = target.token ?: throw ServerApiException("Enter the pairing code shown by `t3 pair`.")

@@ -9,13 +9,16 @@ import codes.t3.android.data.ConnectionStatus
 import codes.t3.android.data.EnvironmentConnection
 import codes.t3.android.data.FollowUpBehavior
 import codes.t3.android.data.ProjectEntry
+import codes.t3.android.data.SavedEnvironment
 import codes.t3.android.data.T3Repository
 import codes.t3.android.data.ThreadEntry
 import codes.t3.android.data.model.ModelSelection
+import codes.t3.android.data.model.ProjectShell
 import codes.t3.android.data.model.RuntimeMode
 import codes.t3.android.data.model.ServerConfig
 import codes.t3.android.data.model.ServerProvider
 import codes.t3.android.data.model.T3Json
+import codes.t3.android.data.model.ThreadShell
 import codes.t3.android.data.model.TurnItem
 import codes.t3.android.data.pairing.PairingTarget
 import codes.t3.android.data.rpc.RpcException
@@ -149,6 +152,8 @@ class ThreadViewModel(
     settingsRepo: AppSettingsRepository,
     val environmentId: String,
     val threadId: String,
+    /** Settings already loaded by the app, so the first frame doesn't wait on DataStore. */
+    initialSettings: AppSettings? = null,
 ) : ViewModel() {
     private val connection: Flow<EnvironmentConnection?> = repository.connections.map { it[environmentId] }.distinctUntilChanged()
 
@@ -160,6 +165,13 @@ class ThreadViewModel(
     val tray = AttachmentTray(viewModelScope, repository)
 
     private val baseState: Flow<ThreadUiState> = combine(detail, shellEntry, status, config, settingsRepo.settings) { detail, (shell, projects), status, config, settings ->
+        buildState(detail, shell, projects, status, config, settings)
+    }
+
+    private fun buildState(
+        detail: ThreadState, shell: ThreadShell?, projects: Map<String, ProjectShell>, status: ConnectionStatus,
+        config: ServerConfig?, settings: AppSettings,
+    ): ThreadUiState {
         val thread = shell ?: detail.thread
         val project = thread?.projectId?.let { projects[it] }
         val envLabel = repository.connection(environmentId)?.environment?.label ?: "environment"
@@ -167,7 +179,7 @@ class ThreadViewModel(
         val selection = thread?.modelSelection ?: config.defaultSelection(project?.defaultModelSelection)
         val provider = providers.firstOrNull { it.instanceId == selection?.instanceId }
         val running = shell?.isWorking == true || detail.activeRun != null
-        ThreadUiState(
+        return ThreadUiState(
             title = thread?.title.orEmpty(),
             subtitle = listOfNotNull(project?.title, envLabel).joinToString(" · "),
             shell = shell,
@@ -194,8 +206,21 @@ class ThreadViewModel(
     private val restoredDraft = MutableStateFlow<String?>(null)
     fun draftRestored() { restoredDraft.value = null }
 
+    /**
+     * Built synchronously from what's already in memory (shell, cached detail, connection state) so the page has
+     * content on its very first frame and the enter transition animates the real screen instead of a blank one.
+     */
+    private fun snapshot(settings: AppSettings?): ThreadUiState? {
+        val conn = repository.connection(environmentId) ?: return null
+        val shell = conn.shell.value
+        return buildState(
+            conn.cachedThread(threadId) ?: ThreadState(), shell.threads[threadId], shell.projects,
+            conn.status.value, conn.config.value, settings ?: AppSettings(),
+        )
+    }
+
     val state: StateFlow<ThreadUiState?> = combine(baseState, tray.items, restoredDraft) { s, items, draft -> s.copy(attachments = items, restoredDraft = draft) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), snapshot(initialSettings))
 
     fun addImages(resolver: android.content.ContentResolver, uris: List<android.net.Uri>) = tray.add(environmentId, resolver, uris)
 
@@ -307,6 +332,8 @@ class NewThreadViewModel(
     private val settingsRepo: AppSettingsRepository,
     private val preferredProjectId: String?,
     private val preferredEnvironmentId: String?,
+    /** Settings already loaded by the app, so the first frame doesn't wait on DataStore. */
+    initialSettings: AppSettings? = null,
 ) : ViewModel() {
     private val selectedKey = MutableStateFlow<Pair<String, String>?>(null) // env, project
     private val selectionOverride = MutableStateFlow<ModelSelection?>(null)
@@ -344,6 +371,12 @@ class NewThreadViewModel(
     val tray = AttachmentTray(viewModelScope, repository)
 
     private val baseState: Flow<NewThreadUiState> = combine(repository.projects, configs, local, repository.savedEnvironments, settingsRepo.settings) { projects, configs, l, saved, settings ->
+        buildState(projects, configs, l, saved, settings)
+    }
+
+    private fun buildState(
+        projects: List<ProjectEntry>, configs: Map<String, ServerConfig?>, l: Local, saved: List<SavedEnvironment>?, settings: AppSettings,
+    ): NewThreadUiState {
         val sorted = projects.sortedByDescending { it.project.updatedAt }
         val selected = l.key?.let { (e, p) -> sorted.firstOrNull { it.environmentId == e && it.project.id == p } }
             ?: sorted.firstOrNull { it.project.id == preferredProjectId && (preferredEnvironmentId == null || it.environmentId == preferredEnvironmentId) }
@@ -353,7 +386,7 @@ class NewThreadViewModel(
         val selection = l.override?.takeIf { o -> providers.any { it.instanceId == o.instanceId } } ?: config.defaultSelection(selected?.project?.defaultModelSelection)
         val provider = providers.firstOrNull { it.instanceId == selection?.instanceId }
         val defaultRuntime = RuntimeMode.of(config?.settings?.defaultRuntimeMode)
-        NewThreadUiState(
+        return NewThreadUiState(
             projects = sorted,
             selected = selected,
             showEnvironment = (saved?.size ?: 0) > 1,
@@ -374,8 +407,17 @@ class NewThreadViewModel(
         )
     }
 
+    /** Built from what's already in memory so the enter transition animates the real screen, not a blank one. */
+    private fun snapshot(settings: AppSettings?): NewThreadUiState = buildState(
+        repository.currentProjects(),
+        repository.connections.value.mapValues { it.value.config.value },
+        Local(null, null, null, false, WorkspaceMode.Local, null, null, true, false, null),
+        repository.savedEnvironments.value,
+        settings ?: AppSettings(),
+    )
+
     val state: StateFlow<NewThreadUiState?> = combine(baseState, tray.items) { s, items -> s.copy(attachments = items) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), snapshot(initialSettings))
 
     fun addImages(resolver: android.content.ContentResolver, uris: List<android.net.Uri>) {
         val env = state.value?.selected?.environmentId ?: return

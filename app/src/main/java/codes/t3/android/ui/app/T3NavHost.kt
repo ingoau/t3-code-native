@@ -110,7 +110,7 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
             composable<ThreadRoute> { entry ->
                 val route = entry.toRoute<ThreadRoute>()
                 val vm: ThreadViewModel = viewModel(key = "${route.environmentId}/${route.threadId}") {
-                    ThreadViewModel(app.repository, settingsRepo, route.environmentId, route.threadId)
+                    ThreadViewModel(app.repository, settingsRepo, route.environmentId, route.threadId, app.settings.value)
                 }
                 val state by vm.state.collectAsStateWithLifecycle()
                 val context = androidx.compose.ui.platform.LocalContext.current
@@ -155,7 +155,7 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
             }
             composable<NewThreadRoute> { entry ->
                 val route = entry.toRoute<NewThreadRoute>()
-                val vm: NewThreadViewModel = viewModel { NewThreadViewModel(app.repository, settingsRepo, route.projectId, route.environmentId) }
+                val vm: NewThreadViewModel = viewModel { NewThreadViewModel(app.repository, settingsRepo, route.projectId, route.environmentId, app.settings.value) }
                 val state by vm.state.collectAsStateWithLifecycle()
                 val context = androidx.compose.ui.platform.LocalContext.current
                 state?.let { s ->

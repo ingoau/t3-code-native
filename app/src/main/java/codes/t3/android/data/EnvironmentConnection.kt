@@ -333,6 +333,9 @@ class EnvironmentConnection(
     }
 
     /** Live thread detail. Survives reconnects (resubscribing with `afterSequence`) and protocol changes. */
+    /** Last known detail for a thread, if it has been opened during this session. */
+    fun cachedThread(threadId: String): ThreadState? = threadCache[threadId]
+
     fun observeThread(threadId: String): Flow<ThreadState> = channelFlow {
         val state = MutableStateFlow(threadCache[threadId] ?: ThreadState())
         launch {
