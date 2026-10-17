@@ -93,6 +93,10 @@ data class ThreadState(
             )
         }
 
+    /** Secret requests (e.g. "Paste your Stripe test key") still waiting for an answer in this thread. */
+    val pendingSecrets: List<TurnItem>
+        get() = items.values.filter { it.type == "secret_request" && it.str("secretStatus") == "pending" }.sortedBy { it.ordinal }
+
     val pendingUserInput: PendingUserInput?
         get() = requests.values.firstOrNull { it.status == "pending" && it.kind == "user_input" }?.let { req ->
             val item = items.values.lastOrNull { it.type == "user_input_request" && it.requestId == req.id }

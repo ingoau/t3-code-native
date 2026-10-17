@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardReturn
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Lightbulb
+import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.SettingsBrightness
 import androidx.compose.material.icons.rounded.WrapText
@@ -153,6 +154,20 @@ fun SettingsScreen(
                     onUpdate { it.copy(showSettled = v) }
                 }
                 NavRow(Icons.Rounded.Archive, "Archived threads", null, onOpenArchive)
+            }
+            group("Notifications") {
+                val permission = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+                ) {}
+                SwitchRow(
+                    Icons.Rounded.NotificationsActive,
+                    "Thread alerts",
+                    "Notify when a thread needs approval or input, fails, or finishes, while the app is connected",
+                    settings.notifications,
+                ) { v ->
+                    onUpdate { it.copy(notifications = v) }
+                    if (v && android.os.Build.VERSION.SDK_INT >= 33) permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
             }
             group("Legacy") {
                 SwitchRow(

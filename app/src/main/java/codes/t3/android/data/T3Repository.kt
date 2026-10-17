@@ -98,6 +98,9 @@ class T3Repository(
 
     fun connection(environmentId: String): EnvironmentConnection? = _connections.value[environmentId]
 
+    /** Old (≤ 0.0.45) servers speak orchestration v1, which has no forks, subagents or git actions. */
+    fun isV1(environmentId: String): Boolean = connection(environmentId)?.protocol == 1
+
     val environmentSnapshots: Flow<List<EnvironmentSnapshot>> =
         combine(savedEnvironments, _connections) { saved, conns -> saved.orEmpty() to conns }
             .flatMapLatest { (saved, conns) ->

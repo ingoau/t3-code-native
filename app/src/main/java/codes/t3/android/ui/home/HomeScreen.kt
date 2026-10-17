@@ -53,6 +53,7 @@ import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SmartToy
+import androidx.compose.material.icons.rounded.Snooze
 import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -136,6 +137,7 @@ sealed interface ThreadAction {
     data object Archive : ThreadAction
     data object Delete : ThreadAction
     data object MarkUnread : ThreadAction
+    data class Snooze(val until: java.time.Instant) : ThreadAction
     data class Rename(val title: String) : ThreadAction
 }
 
@@ -563,6 +565,8 @@ fun ThreadRow(
     val thread = entry.thread
     val badge = thread.badge()
     var menu by remember { mutableStateOf(false) }
+    var snoozing by remember { mutableStateOf(false) }
+    if (snoozing) codes.t3.android.ui.components.SnoozeSheet(onSnooze = { snoozing = false; onAction(entry, ThreadAction.Snooze(it)) }, onDismiss = { snoozing = false })
     val haptics = LocalHapticFeedback.current
     val h = rememberHaptics()
     Surface(
@@ -673,6 +677,12 @@ fun ThreadRow(
                     text = { Text("Rename") },
                     leadingIcon = { Icon(Icons.Rounded.Edit, null) },
                     onClick = { menu = false; onRename(entry) },
+                )
+                if (!thread.isSnoozed) DropdownMenuItem(
+                    text = { Text("Snooze…") },
+                    leadingIcon = { Icon(Icons.Rounded.Snooze, null) },
+                    enabled = thread.pendingRuntimeRequest == null,
+                    onClick = { menu = false; snoozing = true },
                 )
                 DropdownMenuItem(
                     text = { Text("Mark as unread") },

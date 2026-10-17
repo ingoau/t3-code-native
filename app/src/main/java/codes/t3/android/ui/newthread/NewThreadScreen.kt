@@ -208,6 +208,13 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
                             picker.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly))
                         }) else null,
                         onRemoveAttachment = callbacks.onRemoveAttachment,
+                        onBuiltin = { id ->
+                            when (id) {
+                                "model" -> pickerOpen = true
+                                "plan" -> if (!state.composer.planMode) callbacks.onTogglePlan()
+                                "default" -> if (state.composer.planMode) callbacks.onTogglePlan()
+                            }
+                        },
                     )
                     if (state.starting) LoadingIndicator(Modifier.align(Alignment.TopCenter).padding(top = 4.dp))
                 }

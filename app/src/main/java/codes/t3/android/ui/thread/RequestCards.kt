@@ -16,11 +16,15 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.LiveHelp
 import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -29,15 +33,23 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import codes.t3.android.data.model.PendingApproval
+import codes.t3.android.data.model.TurnItem
 import codes.t3.android.data.model.PendingUserInput
 import codes.t3.android.data.model.UserInputQuestion
 import codes.t3.android.ui.theme.MonoStyle
@@ -197,6 +209,51 @@ fun UserInputCard(
                         onSubmit(answers, multi)
                     },
                 ) { Text("Submit answers") }
+            }
+        }
+    }
+}
+
+/**
+ * An agent asking for a secret (an API key, a token). The value is saved in the host's secret store and never shown
+ * to the agent or written to the transcript, as on the web.
+ */
+@Composable
+fun SecretRequestCard(item: TurnItem, onSave: (String) -> Unit, onDecline: () -> Unit) {
+    var secret by remember(item.id) { mutableStateOf("") }
+    var visible by remember(item.id) { mutableStateOf(false) }
+    val haptics = rememberHaptics()
+    Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.tertiaryContainer, contentColor = MaterialTheme.colorScheme.onTertiaryContainer) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Key, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(item.str("label") ?: "Secret requested", style = MaterialTheme.typography.titleMedium)
+            }
+            item.str("reason")?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            OutlinedTextField(
+                value = secret,
+                onValueChange = { secret = it },
+                placeholder = { Text(item.str("placeholder") ?: "Paste the secret") },
+                singleLine = true,
+                visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                trailingIcon = {
+                    IconButton(onClick = { visible = !visible }) {
+                        Icon(
+                            if (visible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                            if (visible) "Hide" else "Show",
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text("Stored securely, never shown to the agent", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { haptics.reject(); onDecline() }) { Text("Decline") }
+                Spacer(Modifier.width(8.dp))
+                Button(enabled = secret.isNotBlank(), onClick = { haptics.confirm(); onSave(secret) }) { Text("Save securely") }
             }
         }
     }

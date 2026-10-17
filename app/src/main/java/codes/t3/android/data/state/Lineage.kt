@@ -1,6 +1,8 @@
 package codes.t3.android.data.state
 
+import codes.t3.android.data.model.Run
 import codes.t3.android.data.model.Subagent
+import codes.t3.android.data.model.WorkflowAgent
 import codes.t3.android.data.model.ThreadShell
 
 /** How a related thread relates to the open one. */
@@ -25,6 +27,60 @@ data class LineageRow(
     val openable: Boolean get() = threadId != null && thread != null
     val active: Boolean get() = status in ActiveStatuses
     val failed: Boolean get() = status == "failed" || status == "error"
+
+    /**
+     * Whether this agent can be stopped on its own, as the desktop app decides: app-owned agents interrupt their
+     * thread; provider-native ones need a strong native task id (Claude only) and a run to stop.
+     */
+    val canStop: Boolean
+        get() {
+            val agent = subagent ?: return false
+            if (kind != LineageKind.Subagent || agent.workflow != null || agent.startedAt == null || !active) return false
+            return when (agent.origin) {
+                "app_owned" -> threadId != null
+                "provider_native" -> agent.driver == "claudeAgent" && agent.runId != null &&
+                    agent.nativeTaskRef?.strength == "strong" && agent.nativeTaskRef.nativeId != null && agent.status in ActiveAgentStatuses
+                else -> false
+            }
+        }
+
+    /** Workflows (Claude's multi-agent tool) run by this agent, grouped by phase. */
+    val workflow: WorkflowGroup? get() = subagent?.workflow?.let { groupWorkflow(it.phases, it.agents) }
+    val canStopWorkflow: Boolean
+        get() = subagent?.workflow != null && active && subagent.origin == "provider_native" && subagent.driver == "claudeAgent"
+}
+
+private val ActiveAgentStatuses = setOf("pending", "running", "waiting")
+
+data class WorkflowPhaseGroup(val index: Int, val title: String, val agents: List<WorkflowAgent>) {
+    val settled: Int get() = agents.count { it.state == "completed" || it.state == "failed" }
+    val running: Boolean get() = agents.any { it.state == "running" || it.state == "queued" }
+    val failed: Boolean get() = agents.any { it.state == "failed" }
+}
+
+data class WorkflowGroup(val phases: List<WorkflowPhaseGroup>, val unphased: List<WorkflowAgent>) {
+    val agentCount: Int get() = phases.sumOf { it.agents.size } + unphased.size
+}
+
+/** Upstream `deriveWorkflowGroups`: phase titles from agents first, then the declared phases; only phases with agents. */
+fun groupWorkflow(phases: List<codes.t3.android.data.model.WorkflowPhase>, agents: List<WorkflowAgent>): WorkflowGroup {
+    val titles = sortedMapOf<Int, String>()
+    agents.forEach { a -> a.phaseIndex?.let { titles.putIfAbsent(it, a.phaseTitle ?: "Phase ${it + 1}") } }
+    phases.forEach { p -> if (p.title.isNotBlank()) titles[p.index] = p.title }
+    val grouped = titles.mapNotNull { (index, title) ->
+        agents.filter { it.phaseIndex == index }.sortedBy { it.index }.takeIf { it.isNotEmpty() }?.let { WorkflowPhaseGroup(index, title, it) }
+    }
+    return WorkflowGroup(grouped, agents.filter { it.phaseIndex == null }.sortedBy { it.index })
+}
+
+/**
+ * The run a fork can merge back (upstream `resolveLatestMergeBackRun`): the newest finished run (a just-finished run
+ * stays `waiting` while its checkpoint is captured), unless a newer run is still going.
+ */
+fun latestMergeBackRun(runs: Collection<Run>): Run? {
+    val candidate = runs.filter { it.status == "waiting" || it.status == "completed" }.maxByOrNull { it.ordinal } ?: return null
+    if (runs.any { it.ordinal > candidate.ordinal && it.status in setOf("preparing", "starting", "running") }) return null
+    return candidate
 }
 
 data class Lineage(
@@ -68,7 +124,7 @@ fun deriveLineage(threadId: String, threads: Map<String, ThreadShell>, subagents
         val row = LineageRow(
             kind = LineageKind.Subagent,
             threadId = agent.childThreadId,
-            title = subagentTitle(agent.title ?: child?.title, agent.prompt),
+            title = agent.workflow?.name ?: subagentTitle(agent.title ?: child?.title, agent.prompt),
             status = childStatus ?: agent.status.let { if (it == "rolled_back") "interrupted" else it },
             thread = child,
             subagent = agent,

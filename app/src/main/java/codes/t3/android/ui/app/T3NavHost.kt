@@ -68,7 +68,14 @@ import kotlinx.serialization.json.decodeFromJsonElement
 @Serializable data class DiffRoute(val environmentId: String, val threadId: String, val fromTurn: Int, val toTurn: Int, val title: String, val subtitle: String)
 
 @Composable
-fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLink: String?, onLinkConsumed: () -> Unit) {
+fun T3NavHost(
+    app: AppViewModel,
+    settingsRepo: AppSettingsRepository,
+    pendingLink: String?,
+    onLinkConsumed: () -> Unit,
+    pendingThread: Pair<String, String>? = null,
+    onThreadConsumed: () -> Unit = {},
+) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) { UiEvents.messages.collect { snackbar.showSnackbar(it) } }
@@ -76,6 +83,12 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
         if (pendingLink != null) {
             nav.navigate(AddEnvironmentRoute(pendingLink))
             onLinkConsumed()
+        }
+    }
+    LaunchedEffect(pendingThread) {
+        pendingThread?.let { (env, thread) ->
+            nav.navigate(ThreadRoute(env, thread)) { launchSingleTop = true }
+            onThreadConsumed()
         }
     }
 
@@ -115,7 +128,13 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                 val state by vm.state.collectAsStateWithLifecycle()
                 val context = androidx.compose.ui.platform.LocalContext.current
                 LaunchedEffect(Unit) { vm.markVisited() }
-                DisposableEffect(Unit) { onDispose { vm.markVisited() } }
+                DisposableEffect(Unit) {
+                    codes.t3.android.OpenThread.current.value = route.environmentId to route.threadId
+                    onDispose {
+                        vm.markVisited()
+                        if (codes.t3.android.OpenThread.current.value == route.environmentId to route.threadId) codes.t3.android.OpenThread.current.value = null
+                    }
+                }
                 state?.let { s ->
                     ThreadScreen(
                         state = s,
@@ -146,6 +165,19 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                                 onResumeQueue = vm::resumeQueue,
                                 onDraftRestored = vm::draftRestored,
                                 onOpenThread = { id -> nav.navigate(ThreadRoute(route.environmentId, id)) },
+                                onStopAgent = vm::stopAgent,
+                                onEditQueued = vm::editQueued,
+                                onAnswerSecret = vm::answerSecret,
+                                onStopWorkflow = vm::stopWorkflow,
+                                onMergeBack = { vm.mergeBack { id -> nav.navigate(ThreadRoute(route.environmentId, id)) } },
+                                git = codes.t3.android.ui.thread.GitCallbacks(
+                                    onRefresh = vm::refreshGit,
+                                    onAction = vm::runGit,
+                                    onPull = vm::pullGit,
+                                    onLink = vm::linkPullRequest,
+                                    onUnlink = vm::unlinkPullRequest,
+                                ),
+                                onFork = { item -> vm.fork(item) { id -> nav.navigate(ThreadRoute(route.environmentId, id)) } },
                                 onViewDiff = { from, to, title ->
                                     nav.navigate(DiffRoute(route.environmentId, route.threadId, from, to, title, vm.state.value?.title.orEmpty()))
                                 },

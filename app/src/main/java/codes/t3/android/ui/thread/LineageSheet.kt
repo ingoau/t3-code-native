@@ -24,6 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.CallSplit
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.MergeType
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.StopCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.SmartToy
@@ -59,6 +63,8 @@ import codes.t3.android.data.model.ThreadShell
 import codes.t3.android.data.state.Lineage
 import codes.t3.android.data.state.LineageKind
 import codes.t3.android.data.state.LineageRow
+import codes.t3.android.data.state.WorkflowGroup
+import codes.t3.android.data.model.WorkflowAgent
 import codes.t3.android.ui.components.rememberHaptics
 import codes.t3.android.ui.theme.T3
 import codes.t3.android.ui.util.formatElapsed
@@ -82,15 +88,26 @@ fun LineageButton(lineage: Lineage, onClick: () -> Unit) {
  * and (collapsed) the agents that already finished. Rows with a thread open it; provider-managed agents without one
  * only show their status, since their work is in this transcript.
  */
+/** Callbacks for actions on lineage rows. [mergeBack] is null unless this thread is a fork. */
+class LineageActions(
+    val onOpenThread: (String) -> Unit = {},
+    val onStopAgent: (LineageRow) -> Unit = {},
+    val onStopWorkflow: (LineageRow) -> Unit = {},
+    /** True when a finished run can be merged back into the parent; false shows the button disabled. */
+    val mergeBack: Boolean? = null,
+    val onMergeBack: () -> Unit = {},
+)
+
 @Composable
-fun LineageSheet(lineage: Lineage, onOpenThread: (String) -> Unit, onDismiss: () -> Unit) {
+fun LineageSheet(lineage: Lineage, actions: LineageActions, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        LineageContent(lineage, onOpenThread)
+        LineageContent(lineage, actions)
     }
 }
 
 @Composable
-fun LineageContent(lineage: Lineage, onOpenThread: (String) -> Unit, modifier: Modifier = Modifier) {
+fun LineageContent(lineage: Lineage, actions: LineageActions, modifier: Modifier = Modifier) {
+    val onOpenThread = actions.onOpenThread
     val ticking = lineage.agents.isNotEmpty()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(ticking) { while (ticking) { now = System.currentTimeMillis(); delay(1000) } }
@@ -103,9 +120,28 @@ fun LineageContent(lineage: Lineage, onOpenThread: (String) -> Unit, modifier: M
             modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp),
         )
         val open: (LineageRow) -> Unit = { row -> row.threadId?.let { haptics.tick(); onOpenThread(it) } }
-        lineage.parent?.let { Section(null, listOf(it), now, open) }
-        Section(if (lineage.parent != null) "Agents" else null, lineage.agents, now, open)
-        Section("Forks", lineage.forks, now, open)
+        lineage.parent?.let { parent ->
+            Section(null, listOf(parent), now, open, actions)
+            if (parent.kind == LineageKind.Parent && actions.mergeBack != null) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (actions.mergeBack) "Bring this fork's changes and conversation back into “${parent.title}”."
+                        else "Complete a run in this fork before merging it back.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    FilledTonalButton(onClick = { haptics.confirm(); actions.onMergeBack() }, enabled = actions.mergeBack) {
+                        Icon(Icons.Rounded.MergeType, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Merge back")
+                    }
+                }
+            }
+        }
+        Section(if (lineage.parent != null) "Agents" else null, lineage.agents, now, open, actions)
+        Section("Forks", lineage.forks, now, open, actions)
         if (lineage.previousAgents.isNotEmpty()) {
             val rotation by animateFloatAsState(if (previousExpanded) 180f else 0f, label = "previous")
             val failed = lineage.previousAgents.count { it.failed }
@@ -128,14 +164,14 @@ fun LineageContent(lineage: Lineage, onOpenThread: (String) -> Unit, modifier: M
                 Icon(Icons.Rounded.ExpandMore, if (previousExpanded) "Collapse" else "Expand", Modifier.rotate(rotation), tint = MaterialTheme.colorScheme.primary)
             }
             AnimatedVisibility(previousExpanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                Section(null, lineage.previousAgents, now, open)
+                Section(null, lineage.previousAgents, now, open, actions)
             }
         }
     }
 }
 
 @Composable
-private fun Section(title: String?, rows: List<LineageRow>, now: Long, onOpen: (LineageRow) -> Unit) {
+private fun Section(title: String?, rows: List<LineageRow>, now: Long, onOpen: (LineageRow) -> Unit, actions: LineageActions) {
     if (rows.isEmpty()) return
     if (title != null) {
         Text(
@@ -147,14 +183,18 @@ private fun Section(title: String?, rows: List<LineageRow>, now: Long, onOpen: (
     }
     Column(Modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         rows.forEachIndexed { index, row ->
-            LineageRowItem(row, codes.t3.android.ui.home.segmentShape(index, rows.size), now, onOpen)
+            LineageRowItem(row, codes.t3.android.ui.home.segmentShape(index, rows.size), now, onOpen, actions)
         }
     }
 }
 
 @Composable
-private fun LineageRowItem(row: LineageRow, shape: RoundedCornerShape, now: Long, onOpen: (LineageRow) -> Unit) {
+private fun LineageRowItem(row: LineageRow, shape: RoundedCornerShape, now: Long, onOpen: (LineageRow) -> Unit, actions: LineageActions) {
+    val workflow = row.workflow
+    var expanded by rememberSaveable(row.key) { mutableStateOf(row.active) }
+    val haptics = rememberHaptics()
     Surface(shape = shape, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+      Column {
         Row(
             Modifier
                 .clickable(enabled = row.openable) { onOpen(row) }
@@ -172,7 +212,8 @@ private fun LineageRowItem(row: LineageRow, shape: RoundedCornerShape, now: Long
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(row.title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                val detail = row.subagent?.progress?.takeIf { row.active }
+                val detail = workflow?.let { w -> "Workflow · " + if (w.agentCount == 1) "1 agent" else "${w.agentCount} agents" }
+                    ?: row.subagent?.progress?.takeIf { row.active }
                     ?: if (!row.openable && row.kind == LineageKind.Subagent) "Runs inside this thread" else null
                 if (detail != null) {
                     Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -181,9 +222,67 @@ private fun LineageRowItem(row: LineageRow, shape: RoundedCornerShape, now: Long
             Spacer(Modifier.width(12.dp))
             Column(horizontalAlignment = Alignment.End) {
                 StatusText(row, now)
-                if (row.openable) Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Open", Modifier.padding(top = 2.dp).size(16.dp).alpha(0.7f), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (row.openable && workflow == null) Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Open", Modifier.padding(top = 2.dp).size(16.dp).alpha(0.7f), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (row.canStop || row.canStopWorkflow) {
+                IconButton(onClick = { haptics.reject(); if (row.canStopWorkflow) actions.onStopWorkflow(row) else actions.onStopAgent(row) }) {
+                    Icon(Icons.Rounded.StopCircle, if (row.canStopWorkflow) "Stop workflow" else "Stop agent", tint = MaterialTheme.colorScheme.error)
+                }
+            }
+            if (workflow != null) {
+                val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "workflow")
+                IconButton(onClick = { haptics.tick(); expanded = !expanded }) {
+                    Icon(Icons.Rounded.ExpandMore, if (expanded) "Collapse workflow" else "Expand workflow", Modifier.rotate(rotation))
+                }
             }
         }
+        if (workflow != null) {
+            AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                WorkflowPhases(workflow, now, actions.onOpenThread)
+            }
+        }
+      }
+    }
+}
+
+@Composable
+private fun WorkflowPhases(workflow: WorkflowGroup, now: Long, onOpenThread: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(start = 50.dp, end = 12.dp, bottom = 10.dp)) {
+        if (workflow.agentCount == 0) {
+            Text("No agents yet", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        workflow.phases.forEach { phase ->
+            Row(Modifier.padding(top = 6.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(phase.title, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "${phase.settled}/${phase.agents.size} " + if (phase.agents.size == 1) "agent" else "agents",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (phase.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            phase.agents.forEach { WorkflowAgentRow(it, now, onOpenThread) }
+        }
+        workflow.unphased.forEach { WorkflowAgentRow(it, now, onOpenThread) }
+    }
+}
+
+@Composable
+private fun WorkflowAgentRow(agent: WorkflowAgent, now: Long, onOpenThread: (String) -> Unit) {
+    val child = agent.childThreadId
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable(enabled = child != null) { child?.let(onOpenThread) }.padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when (agent.state) {
+            "running" -> LoadingIndicator(Modifier.size(18.dp))
+            "failed" -> Icon(Icons.Rounded.ErrorOutline, "Failed", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+            "completed" -> Icon(Icons.Rounded.CheckCircle, "Done", Modifier.size(16.dp), tint = T3.colors.success)
+            else -> Icon(Icons.Rounded.Schedule, "Queued", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(agent.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val ms = agent.durationMs ?: agent.startedAt?.takeIf { agent.state == "running" }?.let { now - it }
+        if (ms != null) Text(formatElapsed(Duration.ofMillis(ms)), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

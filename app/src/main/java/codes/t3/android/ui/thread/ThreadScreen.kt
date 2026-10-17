@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.FormatListNumbered
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.Commit
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Difference
@@ -112,6 +113,12 @@ data class ThreadUiState(
     val restoredDraft: String? = null,
     /** Parent, subagents and forks of this thread. */
     val lineage: codes.t3.android.data.state.Lineage = codes.t3.android.data.state.Lineage(),
+    /** Null unless this thread is a fork; true when its latest finished run can be merged back. */
+    val mergeBack: Boolean? = null,
+    /** Whether the provider can fork from a finished response. */
+    val canFork: Boolean = false,
+    /** Git status and actions for the thread's checkout; [GitUiState.cwd] is null when unavailable. */
+    val git: GitUiState = GitUiState(),
 )
 
 class ThreadCallbacks(
@@ -137,6 +144,14 @@ class ThreadCallbacks(
     val onDraftRestored: () -> Unit = {},
     /** Opens a related thread (parent, subagent or fork) in the same environment. */
     val onOpenThread: (String) -> Unit = {},
+    val onStopAgent: (codes.t3.android.data.state.LineageRow) -> Unit = {},
+    val onStopWorkflow: (codes.t3.android.data.state.LineageRow) -> Unit = {},
+    val onMergeBack: () -> Unit = {},
+    /** Forks the thread after the run that produced this response. */
+    val onFork: (TurnItem) -> Unit = {},
+    val git: GitCallbacks = GitCallbacks(),
+    val onEditQueued: (runId: String, text: String) -> Unit = { _, _ -> },
+    val onAnswerSecret: (itemId: String, secret: String?) -> Unit = { _, _ -> },
     val loadImage: suspend (kotlinx.serialization.json.JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
 )
 
@@ -150,6 +165,9 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var lineageOpen by remember { mutableStateOf(false) }
+    var gitOpen by remember { mutableStateOf(false) }
+    var snoozing by remember { mutableStateOf(false) }
+    var usageOpen by remember { mutableStateOf(false) }
     val detail = state.detail
     val activeRunId = state.shell?.activeRunId ?: detail.activeRun?.id
     val feed = remember(detail, activeRunId) { buildFeed(detail.timeline, detail.runs, activeRunId).asReversed() }
@@ -159,10 +177,11 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
     val approvals = detail.pendingApprovals
     val question = detail.pendingUserInput
     val checkpoints = detail.checkpoints
-    val actions = remember(callbacks, checkpoints) {
+    val actions = remember(callbacks, checkpoints, state.canFork) {
         FeedActions(
             onImplementPlan = callbacks.onImplementPlan,
             onOpenThread = callbacks.onOpenThread,
+            onFork = if (state.canFork) callbacks.onFork else null,
             loadFullItem = callbacks.loadFullItem,
             loadImage = callbacks.loadImage,
             onViewDiff = { id ->
@@ -198,11 +217,12 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                     }
                 },
                 actions = {
-                    if (!state.lineage.isEmpty) LineageButton(state.lineage) { lineageOpen = true }
+                    if (state.git.cwd != null) IconButton(onClick = { gitOpen = true; callbacks.git.onRefresh() }) { Icon(Icons.Rounded.Commit, "Git") }
+                    if (!state.lineage.isEmpty || state.mergeBack != null) LineageButton(state.lineage) { lineageOpen = true }
                     detail.latestTurnCount?.let { turn ->
                         IconButton(onClick = { callbacks.onViewDiff(0, turn, "All changes") }) { Icon(Icons.Rounded.Difference, "View all changes") }
                     }
-                    ThreadOverflow(state.shell, callbacks, onRename = { renaming = true }, onDelete = { confirmDelete = true })
+                    ThreadOverflow(state.shell, callbacks, onRename = { renaming = true }, onDelete = { confirmDelete = true }, onSnooze = { snoozing = true })
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             )
@@ -251,6 +271,9 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                     AnimatedVisibility(approvals.isNotEmpty(), enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
                         approvals.firstOrNull()?.let { a -> ApprovalCard(a, onDecision = { callbacks.onApproval(a.requestId, it) }) }
                     }
+                    detail.pendingSecrets.firstOrNull()?.let { item ->
+                        SecretRequestCard(item, onSave = { callbacks.onAnswerSecret(item.id, it) }, onDecline = { callbacks.onAnswerSecret(item.id, null) })
+                    }
                     ThreadStateLine(state.shell, callbacks)
                     val shell = state.shell
                     if (shell != null && shell.isProviderSubagent && question == null) {
@@ -275,7 +298,18 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                             text = text,
                             onTextChange = { text = it },
                             model = state.composer,
-                            onSend = { mode -> callbacks.onSend(text.trim(), mode); text = "" },
+                            onSend = { mode ->
+                                if (text.trim().lowercase() == "/usage-limits") usageOpen = true else callbacks.onSend(text.trim(), mode)
+                                text = ""
+                            },
+                            onBuiltin = { id ->
+                                when (id) {
+                                    "model" -> pickerOpen = true
+                                    "usage-limits" -> usageOpen = true
+                                    else -> callbacks.onSend("/$id", SendMode.Send)
+                                }
+                            },
+                            onOpenUsage = { usageOpen = true },
                             onStop = callbacks.onStop,
                             onOpenModelPicker = { pickerOpen = true },
                             onTogglePlan = if (state.showPlanToggle) callbacks.onTogglePlan else null,
@@ -302,8 +336,21 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
             onDismiss = { pickerOpen = false },
         )
     }
+    if (usageOpen) UsageSheet(state.composer.context, state.composer.provider(), onDismiss = { usageOpen = false })
+    if (snoozing) codes.t3.android.ui.components.SnoozeSheet(onSnooze = { snoozing = false; callbacks.onThreadAction(ThreadAction.Snooze(it)) }, onDismiss = { snoozing = false })
+    if (gitOpen) GitSheet(state.git, callbacks.git, onDismiss = { gitOpen = false })
     if (lineageOpen) {
-        LineageSheet(state.lineage, onOpenThread = { lineageOpen = false; callbacks.onOpenThread(it) }, onDismiss = { lineageOpen = false })
+        LineageSheet(
+            state.lineage,
+            LineageActions(
+                onOpenThread = { lineageOpen = false; callbacks.onOpenThread(it) },
+                onStopAgent = callbacks.onStopAgent,
+                onStopWorkflow = callbacks.onStopWorkflow,
+                mergeBack = state.mergeBack,
+                onMergeBack = { lineageOpen = false; callbacks.onMergeBack() },
+            ),
+            onDismiss = { lineageOpen = false },
+        )
     }
     if (renaming) {
         RenameDialog(state.title, onDismiss = { renaming = false }) { callbacks.onThreadAction(ThreadAction.Rename(it)); renaming = false }
@@ -325,7 +372,7 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
 }
 
 @Composable
-private fun ThreadOverflow(shell: ThreadShell?, callbacks: ThreadCallbacks, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun ThreadOverflow(shell: ThreadShell?, callbacks: ThreadCallbacks, onRename: () -> Unit, onDelete: () -> Unit, onSnooze: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     Box {
@@ -341,6 +388,12 @@ private fun ThreadOverflow(shell: ThreadShell?, callbacks: ThreadCallbacks, onRe
                 text = { Text(if (shell?.isSettled == true) "Un-settle" else "Settle") },
                 leadingIcon = { Icon(Icons.Rounded.CheckCircle, null) },
                 onClick = { act(if (shell?.isSettled == true) ThreadAction.Unsettle else ThreadAction.Settle) },
+            )
+            if (shell?.isSnoozed != true) DropdownMenuItem(
+                text = { Text("Snooze…") },
+                leadingIcon = { Icon(Icons.Rounded.Snooze, null) },
+                enabled = shell?.pendingRuntimeRequest == null,
+                onClick = { open = false; onSnooze() },
             )
             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { open = false; onRename() })
             DropdownMenuItem(
@@ -432,6 +485,18 @@ private fun StatusPill(
 @Composable
 private fun QueueCard(detail: ThreadState, canSteer: Boolean, callbacks: ThreadCallbacks) {
     val held = detail.queuedRuns.any { it.queueHeld == true }
+    var editing by remember { mutableStateOf<Pair<String, String>?>(null) }
+    editing?.let { (runId, initial) ->
+        var value by remember(runId) { mutableStateOf(initial) }
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            icon = { Icon(Icons.Rounded.Edit, null) },
+            title = { Text("Edit queued message") },
+            text = { androidx.compose.material3.OutlinedTextField(value, { value = it }, minLines = 3, shape = RoundedCornerShape(16.dp)) },
+            confirmButton = { TextButton(enabled = value.isNotBlank(), onClick = { editing = null; callbacks.onEditQueued(runId, value) }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } },
+        )
+    }
     Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
         Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -453,6 +518,7 @@ private fun QueueCard(detail: ThreadState, canSteer: Boolean, callbacks: ThreadC
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f).padding(vertical = 4.dp),
                     )
+                    IconButton(onClick = { editing = run.id to (message?.text.orEmpty()) }) { Icon(Icons.Rounded.Edit, "Edit queued message") }
                     if (canSteer) IconButton(onClick = { callbacks.onSteerQueued(run.id) }) { Icon(Icons.Rounded.Bolt, "Steer now") }
                     IconButton(onClick = { callbacks.onCancelQueued(run.id) }) { Icon(Icons.Rounded.Close, "Remove from queue") }
                 }
