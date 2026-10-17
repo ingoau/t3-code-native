@@ -98,6 +98,34 @@ data class ProviderAuth(val status: String = "unknown", val label: String? = nul
 @Serializable
 data class SlashCommand(val name: String, val description: String? = null)
 
+/** A provider skill; invoked by writing `$name` in a message (the server turns it into the provider's own syntax). */
+@Serializable
+data class ProviderSkill(
+    val name: String,
+    val description: String? = null,
+    val displayName: String? = null,
+    val shortDescription: String? = null,
+    val enabled: Boolean = true,
+    val userInvocable: Boolean? = null,
+)
+
+/** One rate-limit window ("5h limit", "Weekly"), as reported by the provider. */
+@Serializable
+data class UsageWindow(
+    val id: String = "",
+    val kind: String = "other",
+    val label: String = "",
+    val usedPercent: Double = 0.0,
+    val resetsAt: String? = null,
+    val windowDurationMins: Int? = null,
+)
+
+@Serializable
+data class UsageUnavailable(val reason: String = "", val message: String? = null)
+
+@Serializable
+data class UsageLimits(val checkedAt: String? = null, val windows: List<UsageWindow> = emptyList(), val unavailable: UsageUnavailable? = null)
+
 @Serializable
 data class ServerProvider(
     val instanceId: String,
@@ -117,6 +145,8 @@ data class ServerProvider(
     val unavailableReason: String? = null,
     val models: List<ProviderModel> = emptyList(),
     val slashCommands: List<SlashCommand> = emptyList(),
+    val skills: List<ProviderSkill> = emptyList(),
+    val usageLimits: UsageLimits? = null,
 ) {
     val label: String get() = displayName ?: driverLabel(driver, instanceId)
     val selectable: Boolean get() = enabled && installed && availability != "unavailable" && status != "disabled"
@@ -175,8 +205,26 @@ data class LatestVisibleMessage(val id: String, val role: String, val text: Stri
 @Serializable
 data class ThreadLineage(val parentThreadId: String? = null, val relationshipToParent: String? = null, val rootThreadId: String? = null)
 
+/** Where a fork came from. Only `run` forks name their source thread; other kinds are ignored here. */
 @Serializable
-data class PullRequestRef(val number: Int? = null, val url: String? = null, val state: String? = null)
+data class ForkedFrom(val type: String = "", val threadId: String? = null, val runId: String? = null)
+
+@Serializable
+data class PullRequestRef(val number: Int? = null, val url: String? = null, val state: String? = null, val repository: String? = null)
+
+@Serializable
+data class PullRequestSnapshot(val state: String? = null, val title: String? = null, val isDraft: Boolean? = null)
+
+/** A pull request linked to a thread (servers with the `threadPullRequests` capability). */
+@Serializable
+data class ThreadPullRequestLink(
+    val host: String = "",
+    val repository: String = "",
+    val number: Int,
+    val url: String = "",
+    val source: String? = null,
+    val snapshot: PullRequestSnapshot? = null,
+)
 
 @Serializable
 data class ThreadShell(
@@ -192,7 +240,9 @@ data class ThreadShell(
     val branch: String? = null,
     val worktreePath: String? = null,
     val linkedPullRequest: PullRequestRef? = null,
+    val pullRequests: List<ThreadPullRequestLink>? = null,
     val lineage: ThreadLineage? = null,
+    val forkedFrom: ForkedFrom? = null,
     val latestRunId: String? = null,
     val latestRunStartedAt: String? = null,
     val latestRunCompletedAt: String? = null,
@@ -224,6 +274,14 @@ data class ThreadShell(
     val isSettled: Boolean get() = settledAt != null && settledOverride != "active"
     val isSnoozed: Boolean get() = snoozedUntil != null
     val isSubagent: Boolean get() = lineage?.relationshipToParent == "subagent"
+    val isFork: Boolean get() = lineage?.relationshipToParent == "fork"
+
+    /** A subagent the provider started on its own (e.g. Claude's Task tool). It runs by itself and takes no messages. */
+    val isProviderSubagent: Boolean get() = isSubagent && creationSource == "provider"
+
+    /** The thread this one was forked from or spawned by, as upstream resolves it. */
+    val parentThreadId: String?
+        get() = forkedFrom?.takeIf { it.type == "run" }?.threadId ?: lineage?.parentThreadId
 }
 
 val WorkingStatuses = setOf("preparing", "queued", "starting", "running", "waiting")
@@ -266,7 +324,26 @@ data class TurnCapabilities(
 )
 
 @Serializable
-data class SessionCapabilities(val turns: TurnCapabilities? = null)
+data class ThreadCapabilities(val canForkThread: Boolean? = null, val canForkFromTurn: Boolean? = null)
+
+@Serializable
+data class IdentityCapabilities(val nativeThreadIds: String? = null)
+
+@Serializable
+data class ContextCapabilities(val supportsFullThreadHandoff: Boolean? = null)
+
+@Serializable
+data class SessionCapabilities(
+    val turns: TurnCapabilities? = null,
+    val threads: ThreadCapabilities? = null,
+    val identity: IdentityCapabilities? = null,
+    val context: ContextCapabilities? = null,
+) {
+    /** Upstream `canForkProjectedAssistantItem`: a native fork from a turn, or a portable fork via a full handoff. */
+    val canForkFromRun: Boolean
+        get() = (threads?.canForkThread == true && threads.canForkFromTurn == true && identity?.nativeThreadIds == "strong") ||
+            context?.supportsFullThreadHandoff == true
+}
 
 @Serializable
 data class ProviderSession(
@@ -299,6 +376,68 @@ data class RuntimeRequest(
 @Serializable
 data class Checkpoint(val id: String, val appRunOrdinal: Int? = null, val status: String = "ready", val runId: String? = null)
 
+/**
+ * A delegated agent run by this thread. Provider-native subagents may have no [childThreadId]: their work only shows
+ * in the parent's transcript.
+ */
+@Serializable
+data class Subagent(
+    val id: String,
+    val threadId: String = "",
+    val runId: String? = null,
+    val origin: String = "provider_native",
+    val driver: String? = null,
+    val providerInstanceId: String? = null,
+    val childThreadId: String? = null,
+    val nativeTaskRef: NativeRef? = null,
+    val prompt: String = "",
+    val title: String? = null,
+    val model: String? = null,
+    val status: String = "pending",
+    val progress: String? = null,
+    val workflow: SubagentWorkflow? = null,
+    val result: String? = null,
+    val startedAt: String? = null,
+    val completedAt: String? = null,
+    val updatedAt: String? = null,
+) {
+    val isActive: Boolean get() = status in ActiveSubagentStatuses
+}
+
+val ActiveSubagentStatuses = setOf("pending", "running", "waiting")
+
+@Serializable
+data class NativeRef(val driver: String? = null, val nativeId: String? = null, val strength: String? = null)
+
+/** A multi-agent workflow run by one subagent (Claude's workflow tool). Nested timestamps are epoch millis. */
+@Serializable
+data class SubagentWorkflow(
+    val name: String? = null,
+    val phases: List<WorkflowPhase> = emptyList(),
+    val agents: List<WorkflowAgent> = emptyList(),
+    val totalTokens: Long? = null,
+    val toolCalls: Int? = null,
+    val durationMs: Long? = null,
+)
+
+@Serializable
+data class WorkflowPhase(val index: Int, val title: String = "")
+
+@Serializable
+data class WorkflowAgent(
+    val index: Int,
+    val label: String = "",
+    val childThreadId: String? = null,
+    /** `queued`, `running`, `completed` or `failed`. */
+    val state: String = "queued",
+    val phaseIndex: Int? = null,
+    val phaseTitle: String? = null,
+    val model: String? = null,
+    val startedAt: Long? = null,
+    val durationMs: Long? = null,
+    val result: String? = null,
+)
+
 @Serializable
 data class ConversationMessage(
     val id: String,
@@ -329,6 +468,7 @@ data class ThreadProjection(
     val runtimeRequests: List<RuntimeRequest> = emptyList(),
     val messages: List<ConversationMessage> = emptyList(),
     val checkpoints: List<Checkpoint> = emptyList(),
+    val subagents: List<Subagent> = emptyList(),
     val turnItems: List<TurnItem> = emptyList(),
     val visibleTurnItems: List<ProjectedTurnItem> = emptyList(),
     val updatedAt: String? = null,

@@ -16,6 +16,23 @@ self-hosted `t3` server, over your LAN or tailnet. There is no T3 Connect, cloud
   <img src="docs/screenshots/16_diff.png" width="24%" />
   <img src="docs/screenshots/11_new_thread.png" width="24%" />
 </p>
+<p>
+  <img src="docs/screenshots/19_thread_lineage.png" width="24%" />
+  <img src="docs/screenshots/18_thread_agents.png" width="24%" />
+  <img src="docs/screenshots/20_thread_subagent.png" width="24%" />
+  <img src="docs/screenshots/21_new_thread_no_project_picker.png" width="24%" />
+</p>
+<p>
+  <img src="docs/screenshots/23_thread_git.png" width="24%" />
+  <img src="docs/screenshots/24_thread_fork_merge_back.png" width="24%" />
+  <img src="docs/screenshots/28_thread_usage.png" width="24%" />
+  <img src="docs/screenshots/27_thread_slash_commands.png" width="24%" />
+</p>
+<p>
+  <img src="docs/screenshots/26_thread_secret_request.png" width="24%" />
+  <img src="docs/screenshots/25_snooze.png" width="24%" />
+  <img src="docs/screenshots/29_settings_notifications.png" width="24%" />
+</p>
 
 ## Features
 
@@ -26,7 +43,8 @@ self-hosted `t3` server, over your LAN or tailnet. There is no T3 Connect, cloud
 - **Inbox:** threads from every environment in one list, grouped into Pinned, Active and Settled. Status pills show
   Approval, Input, Working, Plan ready, Failed and Done. You can filter by project, search, and pull to refresh.
   - Swipe right to pin and left to settle (or un-settle). Settled threads are collapsed by default.
-  - Long-press to rename, mark as unread, archive or delete.
+  - Long-press to rename, snooze (1 hour, 3 hours, this evening, tomorrow, next week or a date and time), mark as
+    unread, archive or delete.
 - **Thread:**
   - Live streaming chat with Markdown, syntax-highlighted code blocks and a Copy button.
   - Tool work collapses into rows such as "Ran 3 commands, edited 2 files", with a shimmering label for the action
@@ -43,8 +61,31 @@ self-hosted `t3` server, over your LAN or tailnet. There is no T3 Connect, cloud
   - Send, Queue or Steer while a run is going. Long-press Send to choose between them.
   - Stop button, image attachments, and `/plan` and `/default` commands. A Plan/Build toggle is available behind
     Settings › Legacy, matching upstream.
-- **Queue:** follow-ups waiting behind the current run, with remove, "steer now" and resume.
-- **New thread:** pick a project (or add a folder on the host), choose the current checkout or a new git worktree,
+- **Subagents and lineage:** like the Lineage panel in the desktop app, a top-bar button (badged with the number of
+  agents still running) opens the thread's parent, running subagents, forks and previous agents, with live status and
+  elapsed time. Tapping one opens its thread. Subagent rows in the feed open their threads too, the working pill
+  counts running agents, and inbox rows show "2 agents running". A subagent the provider started itself replaces the
+  composer with a status bar and an "Open parent" button, since it takes no messages.
+  - Stop a single running agent, or a whole multi-agent workflow. Workflows expand into their phases and agents.
+  - **Fork from here** on any finished response (when the provider can fork), and **Merge back** from a fork's
+    lineage sheet once it has a finished run.
+- **Git:** a Git sheet per thread shows the checkout's branch, changes and ahead/behind, with Commit (message or
+  auto-generated, optionally on a new branch), Commit & push, Commit, push & PR, Push, Create PR / View PR and
+  Pull latest. Each explains when it's unavailable, and progress streams in as it runs. Pushing to the default branch
+  asks first. You can link a pull request by URL, unlink one, and open linked PRs.
+- **Notifications:** alerts when a thread needs approval or input, fails, hits a usage limit or finishes, following
+  the desktop app's rules (one per run and state, never for subagents or for the thread on screen). Tapping one opens
+  the thread. Upstream's mobile pushes go through the T3 Connect relay, which this app doesn't use, so alerts arrive
+  while the app is connected.
+- **Usage:** a context-window ring in the composer opens a sheet with context use and the provider's rate-limit
+  windows (percent left, reset time). `/usage-limits` opens it too.
+- **Slash commands and skills:** typing `/` lists `/model`, `/plan`, `/default`, `/usage-limits`, the provider's own
+  commands and its skills; `$` lists skills.
+- **Secrets:** when an agent asks for an API key, a card takes it straight into the host's secret store, never the
+  transcript.
+- **Queue:** follow-ups waiting behind the current run, with edit, remove, "steer now" and resume.
+- **New thread:** pick a project (or add a folder on the host, or choose **No project** to work in the server's
+  scratch folder, as on the web), choose the current checkout or a new git worktree,
   and pick a branch from the real repository.
 - **Diffs:** per-turn or whole-thread diffs, with sticky file headers and full-width add/remove bands.
 - **Archive, environment management and settings:** theme (System, Light or Dark), Material You or T3 brand colors,

@@ -29,6 +29,7 @@ open class T3App : Application() {
         super.onCreate()
         settings = AppSettingsRepository(settingsStore)
         repository = T3Repository(EnvironmentRepository(environmentStore, createCipher()), appScope)
+        ThreadNotifier(this, repository, settings, appScope).start()
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) = repository.probeAll()
         })

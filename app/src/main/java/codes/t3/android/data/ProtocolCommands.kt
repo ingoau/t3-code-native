@@ -37,6 +37,13 @@ interface ProtocolCommands {
     fun cancelQueued(threadId: String, runId: String): Op? = null
     fun promoteToSteer(threadId: String, queuedRunId: String, targetRunId: String): Op? = null
     fun resumeQueue(threadId: String): Op? = null
+    fun editQueued(threadId: String, runId: String, text: String): Op? = null
+    fun snooze(threadId: String, until: Instant): Op? = null
+    fun stopSubagent(threadId: String, runId: String, subagentId: String): Op? = null
+    fun stopWorkflow(threadId: String, subagentId: String): Op? = null
+    fun fork(sourceThreadId: String, targetThreadId: String, runId: String, title: String?): Op? = null
+    fun mergeBack(sourceThreadId: String, targetThreadId: String, runId: String): Op? = null
+    fun answerSecret(threadId: String, turnItemId: String, secret: String?): Op? = null
 }
 
 private fun dispatch(payload: JsonObject) = Op("orchestration.dispatchCommand", payload)
@@ -98,6 +105,23 @@ class V2Commands(private val serverResolvesContext: Boolean) : ProtocolCommands 
     override fun cancelQueued(threadId: String, runId: String) = dispatch(Commands.cancelQueued(threadId, runId))
     override fun promoteToSteer(threadId: String, queuedRunId: String, targetRunId: String) = dispatch(Commands.promoteToSteer(threadId, queuedRunId, targetRunId))
     override fun resumeQueue(threadId: String) = dispatch(Commands.resumeQueue(threadId))
+    override fun editQueued(threadId: String, runId: String, text: String) = dispatch(Commands.editQueued(threadId, runId, text))
+    override fun snooze(threadId: String, until: Instant) = dispatch(Commands.snooze(threadId, until))
+    override fun stopSubagent(threadId: String, runId: String, subagentId: String) = dispatch(Commands.stopSubagent(threadId, runId, subagentId))
+    override fun stopWorkflow(threadId: String, subagentId: String) =
+        Op("orchestration.stopWorkflow", buildJsonObject { put("threadId", threadId); put("subagentId", subagentId) })
+    override fun fork(sourceThreadId: String, targetThreadId: String, runId: String, title: String?) =
+        dispatch(Commands.fork(sourceThreadId, targetThreadId, runId, title))
+    override fun mergeBack(sourceThreadId: String, targetThreadId: String, runId: String) =
+        dispatch(Commands.mergeBack(sourceThreadId, targetThreadId, runId))
+    /** A null [secret] declines. Secrets go to the server's store, never into the transcript. */
+    override fun answerSecret(threadId: String, turnItemId: String, secret: String?) = Op("secrets.answerRequest", buildJsonObject {
+        put("threadId", threadId)
+        put("turnItemId", turnItemId)
+        put("answer", buildJsonObject {
+            if (secret.isNullOrBlank()) put("type", "decline") else { put("type", "save"); put("secret", secret.trim()) }
+        })
+    })
 }
 
 /** Command shapes for t3 ≤ 0.0.45 (orchestration protocol v1). */

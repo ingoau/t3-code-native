@@ -23,10 +23,21 @@ import codes.t3.android.data.model.TurnItem
 import codes.t3.android.data.pairing.PairingTarget
 import codes.t3.android.data.rpc.RpcException
 import codes.t3.android.data.state.ThreadState
+import codes.t3.android.data.state.deriveLineage
+import codes.t3.android.data.Git
+import codes.t3.android.data.GitAction
+import codes.t3.android.data.GitProgress
+import codes.t3.android.data.GitStatus
+import codes.t3.android.ui.thread.GitUiState
+import codes.t3.android.ui.thread.LinkedPr
+import codes.t3.android.data.state.latestMergeBackRun
+import codes.t3.android.data.state.LineageRow
+import codes.t3.android.data.isScratchProject
 import codes.t3.android.ui.home.HomeUiState
 import codes.t3.android.ui.home.ThreadAction
 import codes.t3.android.ui.newthread.BranchRef
 import codes.t3.android.ui.newthread.NewThreadUiState
+import codes.t3.android.ui.newthread.ScratchOption
 import codes.t3.android.ui.newthread.WorkspaceMode
 import codes.t3.android.ui.thread.ComposerModel
 import codes.t3.android.ui.thread.SendMode
@@ -39,6 +50,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -81,11 +93,12 @@ fun threadActionOp(commands: codes.t3.android.data.ProtocolCommands, threadId: S
     ThreadAction.Delete -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.Delete)
     ThreadAction.MarkUnread -> commands.housekeeping(threadId, codes.t3.android.data.ThreadOp.MarkUnread)
     is ThreadAction.Rename -> commands.rename(threadId, action.title)
+    is ThreadAction.Snooze -> commands.snooze(threadId, action.until)
 }
 
 private fun actionVerb(action: ThreadAction) = when (action) {
     ThreadAction.Pin -> "pin"; ThreadAction.Unpin -> "unpin"; ThreadAction.Settle -> "settle"; ThreadAction.Unsettle -> "un-settle"; ThreadAction.Unsnooze -> "wake"
-    ThreadAction.Archive -> "archive"; ThreadAction.Delete -> "delete"; ThreadAction.MarkUnread -> "mark"; is ThreadAction.Rename -> "rename"
+    ThreadAction.Archive -> "archive"; ThreadAction.Delete -> "delete"; ThreadAction.MarkUnread -> "mark"; is ThreadAction.Rename -> "rename"; is ThreadAction.Snooze -> "snooze"
 }
 
 fun ServerConfig?.selectableProviders(): List<ServerProvider> = this?.providers.orEmpty().filter { it.selectable && it.models.isNotEmpty() }
@@ -158,20 +171,21 @@ class ThreadViewModel(
     private val connection: Flow<EnvironmentConnection?> = repository.connections.map { it[environmentId] }.distinctUntilChanged()
 
     private val detail: Flow<ThreadState> = connection.flatMapLatest { it?.observeThread(threadId) ?: flowOf(ThreadState(error = "Environment is not connected")) }
-    private val shellEntry = connection.flatMapLatest { c -> c?.shell?.map { s -> s.threads[threadId] to s.projects } ?: flowOf(null to emptyMap()) }
+    private val shellEntry = connection.flatMapLatest { c -> c?.shell?.map { s -> s.threads to s.projects } ?: flowOf(emptyMap<String, ThreadShell>() to emptyMap()) }
     private val status: Flow<ConnectionStatus> = connection.flatMapLatest { it?.status ?: flowOf(ConnectionStatus.Disabled) }
     private val config: Flow<ServerConfig?> = connection.flatMapLatest { it?.config ?: flowOf(null) }
 
     val tray = AttachmentTray(viewModelScope, repository)
 
-    private val baseState: Flow<ThreadUiState> = combine(detail, shellEntry, status, config, settingsRepo.settings) { detail, (shell, projects), status, config, settings ->
-        buildState(detail, shell, projects, status, config, settings)
+    private val baseState: Flow<ThreadUiState> = combine(detail, shellEntry, status, config, settingsRepo.settings) { detail, (threads, projects), status, config, settings ->
+        buildState(detail, threads, projects, status, config, settings)
     }
 
     private fun buildState(
-        detail: ThreadState, shell: ThreadShell?, projects: Map<String, ProjectShell>, status: ConnectionStatus,
+        detail: ThreadState, threads: Map<String, ThreadShell>, projects: Map<String, ProjectShell>, status: ConnectionStatus,
         config: ServerConfig?, settings: AppSettings,
     ): ThreadUiState {
+        val shell = threads[threadId]
         val thread = shell ?: detail.thread
         val project = thread?.projectId?.let { projects[it] }
         val envLabel = repository.connection(environmentId)?.environment?.label ?: "environment"
@@ -179,9 +193,30 @@ class ThreadViewModel(
         val selection = thread?.modelSelection ?: config.defaultSelection(project?.defaultModelSelection)
         val provider = providers.firstOrNull { it.instanceId == selection?.instanceId }
         val running = shell?.isWorking == true || detail.activeRun != null
+        val lineage = deriveLineage(threadId, if (shell == null && thread != null) threads + (threadId to thread) else threads, detail.subagents.values)
+        val projectLabel = project?.title?.takeUnless { isScratchProject(project, config?.scratchWorkspaceRoot) } ?: project?.let { "No project" }
+        val isFork = thread?.isFork == true && thread.parentThreadId != null
+        val sessions = detail.sessions.values
+        val env = config?.environment
+        val multiLink = env?.capability("threadPullRequests") == true
+        val links = thread?.pullRequests?.filter { it.source != "stack-dismissed" }?.map {
+            LinkedPr(it.host, it.repository, it.number, it.url, it.snapshot?.title, it.snapshot?.let { s -> if (s.isDraft == true) "draft" else s.state })
+        } ?: thread?.linkedPullRequest?.let { pr ->
+            pr.number?.let { LinkedPr("", pr.repository.orEmpty(), it, pr.url.orEmpty(), null, pr.state) }
+        }?.let { listOf(it) }.orEmpty()
+        val gitCwd = (thread?.worktreePath ?: project?.workspaceRoot)?.takeIf { it.isNotBlank() && !repository.isV1(environmentId) && !isScratchProject(project, config?.scratchWorkspaceRoot) }
         return ThreadUiState(
+            git = GitUiState(
+                cwd = gitCwd,
+                links = links,
+                canLink = multiLink || env?.capability("threadPullRequestLinking") == true,
+                worktreePath = thread?.worktreePath,
+            ),
+            mergeBack = if (isFork && !repository.isV1(environmentId)) latestMergeBackRun(detail.runs.values) != null else null,
+            canFork = !repository.isV1(environmentId) && (sessions.isEmpty() || sessions.any { it.capabilities == null || it.capabilities.canForkFromRun }),
             title = thread?.title.orEmpty(),
-            subtitle = listOfNotNull(project?.title, envLabel).joinToString(" · "),
+            subtitle = listOfNotNull(if (thread?.isSubagent == true) "Subagent" else null, projectLabel, envLabel).joinToString(" · "),
+            lineage = lineage,
             shell = shell,
             detail = detail,
             connection = status,
@@ -195,6 +230,8 @@ class ThreadViewModel(
                 canStop = running && (shell?.activeRunId ?: detail.activeRun?.id) != null,
                 defaultFollowUp = if (settings.followUp == FollowUpBehavior.Steer) SendMode.Steer else SendMode.Queue,
                 enabled = status == ConnectionStatus.Connected,
+                context = detail.contextUsage?.usedTokens?.let { codes.t3.android.ui.thread.ContextUsage(it, detail.contextUsage?.maxTokens) },
+                builtins = codes.t3.android.ui.thread.builtinCommands(provider, hasThread = true),
             ),
             wrapCode = settings.wrapCode,
             enterToSend = settings.enterToSend,
@@ -214,12 +251,16 @@ class ThreadViewModel(
         val conn = repository.connection(environmentId) ?: return null
         val shell = conn.shell.value
         return buildState(
-            conn.cachedThread(threadId) ?: ThreadState(), shell.threads[threadId], shell.projects,
+            conn.cachedThread(threadId) ?: ThreadState(), shell.threads, shell.projects,
             conn.status.value, conn.config.value, settings ?: AppSettings(),
         )
     }
 
-    val state: StateFlow<ThreadUiState?> = combine(baseState, tray.items, restoredDraft) { s, items, draft -> s.copy(attachments = items, restoredDraft = draft) }
+    private val git = MutableStateFlow(GitUiState())
+
+    val state: StateFlow<ThreadUiState?> = combine(baseState, tray.items, restoredDraft, git) { s, items, draft, g ->
+        s.copy(attachments = items, restoredDraft = draft, git = g.copy(cwd = s.git.cwd, links = s.git.links, canLink = s.git.canLink, worktreePath = s.git.worktreePath))
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), snapshot(initialSettings))
 
     fun addImages(resolver: android.content.ContentResolver, uris: List<android.net.Uri>) = tray.add(environmentId, resolver, uris)
@@ -282,6 +323,13 @@ class ThreadViewModel(
     }
 
     fun cancelQueued(runId: String) = run("remove queued message") { it.cancelQueued(threadId, runId) }
+    fun editQueued(runId: String, text: String) {
+        if (text.isBlank()) return
+        run("edit queued message") { it.editQueued(threadId, runId, text.trim()) }
+    }
+
+    /** Saves (or, with a null [secret], declines) an agent's secret request. The secret goes to the host's store only. */
+    fun answerSecret(itemId: String, secret: String?) = run(if (secret == null) "decline" else "save the secret") { it.answerSecret(threadId, itemId, secret) }
     fun steerQueued(runId: String) {
         val target = state.value?.detail?.activeRun?.id ?: return
         run("steer") { it.promoteToSteer(threadId, runId, target) }
@@ -324,6 +372,137 @@ class ThreadViewModel(
 
     fun reconnect() {
         repository.connection(environmentId)?.let { it.retryThreads(); it.reconnectNow() }
+    }
+
+    // ------------------------------------------------------------------ git
+
+    fun refreshGit() {
+        val cwd = state.value?.git?.cwd ?: return
+        val conn = repository.connection(environmentId) ?: return
+        git.update { it.copy(loading = true, error = null) }
+        viewModelScope.launch {
+            runCatching { GitStatus.parse(conn.call("vcs.refreshStatus", Git.statusRequest(cwd)) as JsonObject) }
+                .onSuccess { s -> git.update { it.copy(status = s, loading = false) } }
+                .onFailure { e -> git.update { it.copy(loading = false, error = "Couldn't read git status: ${errorText(e)}") } }
+        }
+    }
+
+    /** Runs a stacked git action, following its progress stream; a branch it creates becomes the thread's branch. */
+    fun runGit(action: GitAction, message: String?, featureBranch: Boolean) {
+        val cwd = state.value?.git?.cwd ?: return
+        val conn = repository.connection(environmentId) ?: return UiEvents.show("Environment is not connected")
+        if (git.value.busy != null) return
+        git.update { it.copy(busy = "${action.label}…", error = null) }
+        viewModelScope.launch {
+            var outcome: GitProgress? = null
+            runCatching {
+                conn.stream("git.runStackedAction", Git.actionRequest(UUID.randomUUID().toString(), cwd, action, threadId, message, featureBranch)).collect { e ->
+                    when (val p = Git.progress(e as? JsonObject ?: return@collect)) {
+                        is GitProgress.Phase -> git.update { it.copy(busy = p.label) }
+                        is GitProgress.Finished, is GitProgress.Failed -> outcome = p
+                        null -> {}
+                    }
+                }
+            }.onFailure { outcome = GitProgress.Failed(errorText(it)) }
+            when (val o = outcome) {
+                is GitProgress.Finished -> {
+                    UiEvents.show(listOfNotNull(o.title, o.description).joinToString(" · "))
+                    o.createdBranch?.let { branch ->
+                        runCatching {
+                            conn.dispatch(buildJsonObject {
+                                put("type", "thread.metadata.update"); put("commandId", Commands.newId()); put("threadId", threadId)
+                                put("branch", branch); put("worktreePath", state.value?.git?.worktreePath)
+                            })
+                        }
+                    }
+                    git.update { it.copy(busy = null) }
+                }
+                is GitProgress.Failed -> git.update { it.copy(busy = null, error = o.message) }
+                else -> git.update { it.copy(busy = null, error = "The git action ended without a result") }
+            }
+            refreshGit()
+        }
+    }
+
+    fun pullGit() {
+        val cwd = state.value?.git?.cwd ?: return
+        val conn = repository.connection(environmentId) ?: return
+        git.update { it.copy(busy = "Pulling…", error = null) }
+        viewModelScope.launch {
+            runCatching { conn.call("vcs.pull", Git.statusRequest(cwd)) as JsonObject }
+                .onSuccess { r ->
+                    val pulled = (r["status"] as? JsonPrimitive)?.contentOrNull == "pulled"
+                    UiEvents.show(if (pulled) "Pulled latest on ${(r["refName"] as? JsonPrimitive)?.contentOrNull ?: "branch"}" else "Already up to date")
+                    git.update { it.copy(busy = null) }
+                }
+                .onFailure { e -> git.update { it.copy(busy = null, error = "Pull failed: ${errorText(e)}") } }
+            refreshGit()
+        }
+    }
+
+    fun linkPullRequest(url: String) {
+        val pr = Git.parsePrUrl(url) ?: return UiEvents.show("That isn't a pull request URL")
+        val conn = repository.connection(environmentId) ?: return
+        val projectId = state.value?.shell?.projectId ?: return
+        val multiple = conn.config.value?.environment?.capability("threadPullRequests") == true
+        viewModelScope.launch {
+            runCatching { conn.dispatch(Git.linkPullRequest(threadId, projectId, pr, multiple)) }
+                .onSuccess { UiEvents.show("Linked #${pr.number}") }
+                .onFailure { UiEvents.show("Could not link the pull request: ${errorText(it)}") }
+        }
+    }
+
+    fun unlinkPullRequest(link: LinkedPr) {
+        val conn = repository.connection(environmentId) ?: return
+        val multiple = conn.config.value?.environment?.capability("threadPullRequests") == true
+        viewModelScope.launch {
+            runCatching { conn.dispatch(Git.unlinkPullRequest(threadId, link.host, link.repository, link.number, multiple)) }
+                .onFailure { UiEvents.show("Could not unlink: ${errorText(it)}") }
+        }
+    }
+
+    /** Provider-native agents stop by subagent id inside the parent's run; app-owned ones interrupt their own thread. */
+    fun stopAgent(row: LineageRow) {
+        val agent = row.subagent ?: return
+        if (agent.origin == "provider_native") {
+            val runId = agent.runId ?: return
+            run("stop the agent") { it.stopSubagent(threadId, runId, agent.id) }
+        } else {
+            val child = row.threadId ?: return
+            val runId = row.thread?.activeRunId ?: return UiEvents.show("That agent isn't running")
+            run("stop the agent") { it.interrupt(child, runId) }
+        }
+    }
+
+    fun stopWorkflow(row: LineageRow) {
+        val id = row.subagent?.id ?: return
+        run("stop the workflow") { it.stopWorkflow(threadId, id) }
+    }
+
+    /** Forks after [item]'s run, then opens the new thread once the shell has it (as the upstream apps do). */
+    fun fork(item: TurnItem, onOpen: (String) -> Unit) {
+        val runId = item.runId ?: return
+        val conn = repository.connection(environmentId) ?: return UiEvents.show("Environment is not connected")
+        val target = UUID.randomUUID().toString()
+        val title = state.value?.title?.ifBlank { null }?.let { "$it fork" }
+        val op = conn.commands.fork(threadId, target, runId, title) ?: return UiEvents.show("This server doesn't support forking. Update T3 Code on the host.")
+        viewModelScope.launch {
+            runCatching {
+                conn.run(op)
+                kotlinx.coroutines.withTimeout(15_000) { conn.shell.first { it.threads.containsKey(target) } }
+            }.onSuccess { onOpen(target) }.onFailure { UiEvents.show("Could not fork: ${errorText(it)}") }
+        }
+    }
+
+    fun mergeBack(onOpen: (String) -> Unit) {
+        val s = state.value ?: return
+        val target = s.shell?.parentThreadId ?: s.detail.thread?.parentThreadId ?: return
+        val run = latestMergeBackRun(s.detail.runs.values) ?: return UiEvents.show("Complete a run in this fork before merging it back")
+        val conn = repository.connection(environmentId) ?: return UiEvents.show("Environment is not connected")
+        val op = conn.commands.mergeBack(threadId, target, run.id) ?: return
+        viewModelScope.launch {
+            runCatching { conn.run(op) }.onSuccess { onOpen(target) }.onFailure { UiEvents.show("Could not merge back: ${errorText(it)}") }
+        }
     }
 }
 
@@ -380,21 +559,28 @@ class NewThreadViewModel(
         val sorted = projects.sortedByDescending { it.project.updatedAt }
         val selected = l.key?.let { (e, p) -> sorted.firstOrNull { it.environmentId == e && it.project.id == p } }
             ?: sorted.firstOrNull { it.project.id == preferredProjectId && (preferredEnvironmentId == null || it.environmentId == preferredEnvironmentId) }
+            ?: sorted.firstOrNull { !it.isScratch }
             ?: sorted.firstOrNull()
+        val labels = saved.orEmpty().associate { it.environmentId to it.label }
+        val scratch = configs.filterValues { it?.scratchWorkspaceRoot != null }.keys
+            .map { env -> ScratchOption(env, labels[env] ?: sorted.firstOrNull { it.environmentId == env }?.environmentLabel ?: "environment") }
+            .sortedBy { it.environmentLabel }
         val config = selected?.let { configs[it.environmentId] }
         val providers = config.selectableProviders()
         val selection = l.override?.takeIf { o -> providers.any { it.instanceId == o.instanceId } } ?: config.defaultSelection(selected?.project?.defaultModelSelection)
         val provider = providers.firstOrNull { it.instanceId == selection?.instanceId }
         val defaultRuntime = RuntimeMode.of(config?.settings?.defaultRuntimeMode)
         return NewThreadUiState(
-            projects = sorted,
+            projects = sorted.filterNot { it.isScratch },
             selected = selected,
+            scratch = scratch,
             showEnvironment = (saved?.size ?: 0) > 1,
             composer = ComposerModel(
                 providers = providers,
                 selection = selection,
                 runtimeMode = l.runtime ?: defaultRuntime,
                 planMode = l.plan,
+                builtins = codes.t3.android.ui.thread.builtinCommands(provider, hasThread = false),
             ),
             showPlanToggle = l.plan || (settings.legacyPlanMode && provider?.showInteractionModeToggle == true),
             workspace = l.workspace,
@@ -441,6 +627,8 @@ class NewThreadViewModel(
 
     fun loadBranches() {
         val selected = state.value?.selected ?: return
+        // The scratch folder isn't a repository; there's no checkout or worktree to choose.
+        if (selected.isScratch) { isRepo.value = false; branches.value = emptyList(); return }
         val conn = repository.connection(selected.environmentId) ?: return
         viewModelScope.launch {
             runCatching {
@@ -462,6 +650,29 @@ class NewThreadViewModel(
                 isRepo.value = false
                 branches.value = emptyList()
             }
+        }
+    }
+
+    /**
+     * "No project": like the desktop app, finds or creates the environment's scratch project (`projects.ensureScratch`)
+     * and selects it once it shows up in the shell, since the thread is launched into its folder.
+     */
+    fun selectScratch(environmentId: String) {
+        repository.currentProjects().firstOrNull { it.environmentId == environmentId && it.isScratch }?.let { return selectProject(it) }
+        val conn = repository.connection(environmentId) ?: return UiEvents.show("Environment is not connected")
+        viewModelScope.launch {
+            runCatching {
+                val result = conn.call("projects.ensureScratch") as JsonObject
+                val projectId = (result["projectId"] as JsonPrimitive).content
+                kotlinx.coroutines.withTimeout(10_000) { conn.shell.first { it.projects.containsKey(projectId) } }
+                projectId
+            }.onSuccess { projectId ->
+                if (state.value?.selected?.environmentId != environmentId) tray.clear()
+                selectedKey.value = environmentId to projectId
+                branch.value = null
+                branches.value = null
+                selectionOverride.value = null
+            }.onFailure { UiEvents.show("Could not start without a project: ${errorText(it)}") }
         }
     }
 
@@ -490,9 +701,10 @@ class NewThreadViewModel(
         if (text.trim().lowercase() in setOf("/default", "/build")) { plan.value = false; return }
         val conn = repository.connection(selected.environmentId) ?: return UiEvents.show("Environment is not connected")
         val threadId = UUID.randomUUID().toString()
-        val workspaceStrategy = when (s.workspace) {
-            WorkspaceMode.Local -> Commands.Workspace.Root(s.branch)
-            WorkspaceMode.Worktree -> Commands.Workspace.NewWorktree(s.branch ?: "HEAD", Commands.worktreeBranch())
+        val workspaceStrategy = when {
+            selected.isScratch -> Commands.Workspace.Root(null)
+            s.workspace == WorkspaceMode.Local -> Commands.Workspace.Root(s.branch)
+            else -> Commands.Workspace.NewWorktree(s.branch ?: "HEAD", Commands.worktreeBranch())
         }
         starting.value = true
         error.value = null

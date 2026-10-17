@@ -12,6 +12,13 @@ import codes.t3.android.data.AppSettings
 import codes.t3.android.data.ConnectionStatus
 import codes.t3.android.data.model.RuntimeMode
 import codes.t3.android.data.state.ThreadState
+import codes.t3.android.data.state.deriveLineage
+import codes.t3.android.ui.thread.ContextUsage
+import codes.t3.android.ui.thread.GitUiState
+import codes.t3.android.ui.thread.LinkedPr
+import codes.t3.android.ui.thread.builtinCommands
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.performTextInput
 import codes.t3.android.ui.environments.AddEnvironmentScreen
 import codes.t3.android.ui.environments.EnvironmentsScreen
 import codes.t3.android.ui.home.HomeScreen
@@ -67,6 +74,15 @@ class ScreenshotTest {
     private fun Home(state: HomeUiState = home()) = HomeScreen(state, {}, {}, {}, {}, {}, { _, _ -> }, {})
 
     private fun threadState(detail: ThreadState, title: String, subtitle: String) = ThreadUiState(
+        lineage = deriveLineage(detail.thread?.id.orEmpty(), Fixtures.allThreads, detail.subagents.values),
+        canFork = true,
+        git = GitUiState(
+            cwd = "/Users/julius/code/t3code",
+            status = Fixtures.gitStatus,
+            canLink = true,
+            links = listOf(LinkedPr("github.com", "pingdotgg/t3code", 2817, "https://github.com/pingdotgg/t3code/pull/2817", "Fix keepalive race in session pinger", "open")),
+            worktreePath = "/Users/julius/code/t3code/.t3/worktrees/t3-8f2a91c4",
+        ),
         title = title,
         subtitle = subtitle,
         shell = detail.thread,
@@ -80,6 +96,8 @@ class ScreenshotTest {
             planMode = detail.thread?.interactionMode == "plan",
             running = detail.activeRun != null,
             canStop = detail.activeRun != null,
+            context = ContextUsage(84_000, 200_000),
+            builtins = builtinCommands(Fixtures.providers.first(), hasThread = true),
         ),
         showPlanToggle = detail.thread?.interactionMode == "plan",
     )
@@ -159,6 +177,119 @@ class ScreenshotTest {
         )
         render(true) { NewThreadScreen(state, NewThreadCallbacks()) }
         capture("11_new_thread")
+    }
+
+    @Test fun thread_agents() {
+        render(false) { ThreadScreen(threadState(Fixtures.agentsState(), "Fix flaky websocket reconnect test", "t3code · Julius's MacBook Pro"), ThreadCallbacks(), "t1") }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("Subagent: Review", substring = true).performClick()
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        capture("18_thread_agents")
+    }
+
+    @Test fun thread_lineage() {
+        render(true) { ThreadScreen(threadState(Fixtures.agentsState(), "Fix flaky websocket reconnect test", "t3code · Julius's MacBook Pro"), ThreadCallbacks(), "t1") }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithContentDescription("Lineage").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(2_000)
+        captureScreen("19_thread_lineage")
+    }
+
+    @Test fun thread_subagent() {
+        render(false) {
+            ThreadScreen(
+                threadState(Fixtures.subagentState(), "Explore: find every caller of makePinger", "Subagent · t3code · Julius's MacBook Pro")
+                    .let { it.copy(composer = it.composer.copy(selection = codes.t3.android.data.model.ModelSelection("claudeAgent", "claude-sonnet-5-5"))) },
+                ThreadCallbacks(),
+                "a1",
+            )
+        }
+        capture("20_thread_subagent")
+    }
+
+    @Test fun new_thread_no_project_picker() {
+        render(false) { NewThreadScreen(noProjectState(selected = Fixtures.projectEntries.first()), NewThreadCallbacks()) }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("t3code").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(2_000)
+        captureScreen("21_new_thread_no_project_picker")
+    }
+
+    @Test fun new_thread_no_project() {
+        render(true) {
+            NewThreadScreen(noProjectState(selected = codes.t3.android.data.ProjectEntry(Fixtures.ENV, Fixtures.saved.label, Fixtures.scratchProject, isScratch = true)), NewThreadCallbacks())
+        }
+        capture("22_new_thread_no_project")
+    }
+
+    private fun noProjectState(selected: codes.t3.android.data.ProjectEntry) = NewThreadUiState(
+        projects = Fixtures.projectEntries,
+        selected = selected,
+        showEnvironment = false,
+        scratch = listOf(codes.t3.android.ui.newthread.ScratchOption(Fixtures.ENV, Fixtures.saved.label)),
+        composer = ComposerModel(Fixtures.providers, Fixtures.selection, RuntimeMode.AutoEdits),
+        showPlanToggle = false,
+        branch = "main",
+        branches = listOf(BranchRef("main", true, true, false)),
+    )
+
+    @Test fun thread_git() {
+        render(false) { ThreadScreen(threadState(Fixtures.conversationState(live = false), "Fix flaky websocket reconnect test", "t3code · Julius's MacBook Pro"), ThreadCallbacks(), "t1") }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithContentDescription("Git").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(2_000)
+        captureScreen("23_thread_git")
+    }
+
+    @Test fun thread_fork_merge_back() {
+        val fork = Fixtures.forkState()
+        render(true) { ThreadScreen(threadState(fork, "Try a fake-timers approach instead", "Fork · t3code · Julius's MacBook Pro").copy(mergeBack = true), ThreadCallbacks(), "f1") }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithContentDescription("Lineage").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(2_000)
+        captureScreen("24_thread_fork_merge_back")
+    }
+
+    @Test fun snooze() {
+        val now = java.time.ZonedDateTime.of(2026, 10, 16, 14, 0, 0, 0, java.time.ZoneId.systemDefault())
+        render(false) { Home(); codes.t3.android.ui.components.SnoozeSheet(onSnooze = {}, onDismiss = {}, now = now) }
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(2_000)
+        captureScreen("25_snooze")
+    }
+
+    @Test fun thread_secret_and_queue() {
+        render(false) { ThreadScreen(threadState(Fixtures.secretState(), "Add rate limiting to the public webhooks endpoint", "acme-api · Julius's MacBook Pro"), ThreadCallbacks(), "t2") }
+        capture("26_thread_secret_request")
+    }
+
+    @Test fun thread_slash_commands() {
+        render(true) { ThreadScreen(threadState(Fixtures.conversationState(live = false), "Fix flaky websocket reconnect test", "t3code · Julius's MacBook Pro"), ThreadCallbacks(), "t1-slash") }
+        compose.onNode(hasSetTextAction()).performTextInput("/")
+        compose.mainClock.advanceTimeBy(1_000)
+        capture("27_thread_slash_commands")
+    }
+
+    @Test fun thread_usage() {
+        render(false) { ThreadScreen(threadState(Fixtures.conversationState(live = false), "Fix flaky websocket reconnect test", "t3code · Julius's MacBook Pro"), ThreadCallbacks(), "t1") }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithContentDescription("Context window", substring = true).performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(2_000)
+        captureScreen("28_thread_usage")
+    }
+
+    /** A tall screen, so the Notifications section is on screen without scrolling. */
+    @Config(qualifiers = "+h1560dp")
+    @Test fun settings_notifications() {
+        render(true) { SettingsScreen(AppSettings(), 2, {}, {}, {}, {}) }
+        capture("29_settings_notifications")
     }
 
     @Test fun add_environment() {

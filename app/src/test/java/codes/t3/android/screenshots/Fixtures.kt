@@ -21,6 +21,16 @@ import codes.t3.android.data.model.Run
 import codes.t3.android.data.model.RuntimeRequest
 import codes.t3.android.data.model.ServerConfig
 import codes.t3.android.data.model.ServerProvider
+import codes.t3.android.data.model.ProviderSkill
+import codes.t3.android.data.model.SlashCommand
+import codes.t3.android.data.model.UsageLimits
+import codes.t3.android.data.model.UsageWindow
+import codes.t3.android.data.model.NativeRef
+import codes.t3.android.data.model.SubagentWorkflow
+import codes.t3.android.data.model.WorkflowAgent
+import codes.t3.android.data.model.WorkflowPhase
+import codes.t3.android.data.model.Subagent
+import codes.t3.android.data.model.ThreadLineage
 import codes.t3.android.data.model.ThreadShell
 import codes.t3.android.data.model.TurnItem
 import codes.t3.android.data.state.ThreadState
@@ -59,7 +69,20 @@ object Fixtures {
         ServerProvider(
             instanceId = "claudeAgent", driver = "claudeAgent", displayName = "Claude", showInteractionModeToggle = true,
             supportedRuntimeModes = listOf("approval-required", "auto-accept-edits", "auto", "full-access"),
-            auth = ProviderAuth("authenticated", email = "julius@t3.gg"),
+            auth = ProviderAuth("authenticated", label = "Max", email = "julius@t3.gg"),
+            slashCommands = listOf(SlashCommand("compact", "Summarise the conversation to free up context"), SlashCommand("review", "Review the current changes")),
+            skills = listOf(
+                ProviderSkill("frontend-design", displayName = "frontend-design", shortDescription = "Distinctive, intentional UI design"),
+                ProviderSkill("release-notes", shortDescription = "Draft release notes from merged PRs"),
+            ),
+            usageLimits = UsageLimits(
+                checkedAt = ago(60),
+                windows = listOf(
+                    UsageWindow("five_hour", "session", "5-hour limit", 42.0, now.plusSeconds(2 * 3600 + 14 * 60).toString(), 300),
+                    UsageWindow("seven_day", "weekly", "Weekly limit", 81.0, now.plusSeconds(3 * 86400 + 4 * 3600).toString(), 10080),
+                    UsageWindow("seven_day_opus", "weekly", "Weekly Opus limit", 93.0, now.plusSeconds(3 * 86400 + 4 * 3600).toString(), 10080),
+                ),
+            ),
             models = listOf(
                 opus,
                 ProviderModel("claude-sonnet-5-5", "Claude Sonnet 5.5", shortName = "Sonnet 5.5", capabilities = opus.capabilities),
@@ -124,7 +147,65 @@ object Fixtures {
         thread("t8", "p-web", "Write release notes for 0.0.46", 3600 * 72, settled = true),
         thread("t9", "p-t3", "Investigate memory growth in the terminal service", 3600 * 120, settled = true),
         thread("t10", "p-dot", "Configure Tailscale Serve for the build box", 3600 * 200, settled = true),
-    ).map { ThreadEntry(ENV, saved.label, it, project(it.projectId)) }
+    ).plus(subagentThreads()).map { ThreadEntry(ENV, saved.label, it, project(it.projectId)) }
+
+    /** Agents the main demo thread (t1) spawned; the inbox hides them but badges t1. */
+    private fun subagentThreads(): List<ThreadShell> = listOf(
+        agentThread("a1", "Explore: find every caller of makePinger", "running", startedSec = 64),
+        agentThread("a2", "Review: audit the fake clock helpers", "running", startedSec = 41),
+        agentThread("a3", "Run the full client-runtime suite", "completed", startedSec = 560, durationSec = 74),
+        agentThread("a4", "Bisect the CI flake across the last 20 runs", "failed", startedSec = 540, durationSec = 22),
+    )
+
+    private fun agentThread(id: String, title: String, status: String, startedSec: Long, durationSec: Long = 0) = ThreadShell(
+        id = id, projectId = "p-t3", title = title, status = status, creationSource = "provider", createdBy = "agent",
+        lineage = ThreadLineage(parentThreadId = "t1", relationshipToParent = "subagent", rootThreadId = "t1"),
+        modelSelection = ModelSelection("claudeAgent", "claude-sonnet-5-5"), providerInstanceId = "claudeAgent",
+        activeRunId = if (status == "running") "run-$id" else null,
+        activityRunStatus = if (status == "running") "running" else null,
+        activityRunStartedAt = if (status == "running") ago(startedSec) else null,
+        latestRunStartedAt = ago(startedSec),
+        latestRunCompletedAt = if (status == "running") null else ago(startedSec - durationSec),
+        createdAt = ago(startedSec), updatedAt = ago(startedSec - durationSec), branch = "t3/8f2a91c4",
+    )
+
+    /** A fork of t1, shown under Forks in its lineage. */
+    val forkThread = ThreadShell(
+        id = "f1", projectId = "p-t3", title = "Try a fake-timers approach instead", status = "completed",
+        lineage = ThreadLineage(parentThreadId = "t1", relationshipToParent = "fork", rootThreadId = "t1"),
+        createdAt = ago(400), updatedAt = ago(300), latestRunCompletedAt = ago(300),
+    )
+
+    val allThreads: Map<String, ThreadShell> = (threads.map { it.thread } + forkThread).associateBy { it.id }
+
+    /** Projection records for t1's agents, including one the provider ran inline (no thread of its own). */
+    val subagents: List<Subagent> = subagentThreads().map { t ->
+        Subagent(
+            id = "node-${t.id}", threadId = "t1", origin = "provider_native", driver = "claudeAgent", providerInstanceId = "claudeAgent",
+            runId = "run-2", nativeTaskRef = NativeRef("claudeAgent", "task-${t.id}", "strong"),
+            childThreadId = t.id, prompt = t.title, title = t.title, model = "claude-sonnet-5-5", status = t.status,
+            progress = if (t.id == "a1") "Reading rpc/session.ts" else null,
+            startedAt = t.latestRunStartedAt, completedAt = t.latestRunCompletedAt, updatedAt = t.updatedAt,
+        )
+    } + Subagent(
+        id = "node-wf", threadId = "t1", origin = "provider_native", driver = "claudeAgent", runId = "run-2", childThreadId = null,
+        prompt = "Audit every reconnect path", status = "running", startedAt = ago(50), updatedAt = ago(5),
+        workflow = SubagentWorkflow(
+            name = "Audit reconnect paths",
+            phases = listOf(WorkflowPhase(0, "Survey"), WorkflowPhase(1, "Verify")),
+            agents = listOf(
+                WorkflowAgent(0, "client-runtime session", state = "completed", phaseIndex = 0, durationMs = 21_000),
+                WorkflowAgent(1, "server ws handler", state = "completed", phaseIndex = 0, durationMs = 34_000),
+                WorkflowAgent(2, "mobile reconnect", state = "running", phaseIndex = 0, startedAt = now.minusSeconds(19).toEpochMilli()),
+                WorkflowAgent(3, "Cross-check findings", state = "queued", phaseIndex = 1),
+            ),
+        ),
+    ) + Subagent(
+        id = "node-inline", threadId = "t1", origin = "provider_native", driver = "claudeAgent", childThreadId = null,
+        prompt = "Summarise the failing CI logs", status = "completed", startedAt = ago(590), completedAt = ago(575), updatedAt = ago(575),
+    )
+
+    val scratchProject = ProjectShell("p-scratch", "No project", "/Users/julius/.t3/scratch")
 
     val projectEntries = projects.map { ProjectEntry(ENV, saved.label, it) }
 
@@ -242,6 +323,86 @@ object Fixtures {
         val thread = threads.first().thread.let { if (live) it else it.copy(status = "completed", activeRunId = null) }
         return ThreadState(sequence = 10, thread = thread, runs = runs, items = items.associateBy { it.id }, synchronized = true)
     }
+
+    /** t1 mid-run with subagents working, as in the desktop app's Lineage panel. */
+    fun agentsState(): ThreadState {
+        val base = conversationState(live = true)
+        val r2 = "run-2"
+        val agents = subagentThreads().filter { it.status == "running" }.map { t ->
+            item("subagent", r2, status = "running", startedSec = 64, extra = mapOf(
+                "subagentId" to s("node-${t.id}"), "childThreadId" to s(t.id), "title" to s(t.title), "prompt" to s(t.title),
+                "origin" to s("provider_native"), "driver" to s("claudeAgent"),
+            ))
+        }
+        return base.copy(
+            items = base.items + agents.associateBy { it.id },
+            subagents = subagents.associateBy { it.id },
+        )
+    }
+
+    /** One of t1's agents, opened: it runs on its own, so the composer gives way to a status bar. */
+    fun subagentState(): ThreadState {
+        ordinal = 400
+        val r = "run-a1"
+        val items = listOf(
+            user(r, "Find every caller of makePinger in packages/ and report how each one handles a missed pong.", 64),
+            reasoning(r, "Searching the workspace for makePinger and its call sites.", 62),
+            search(r, "makePinger", 60),
+            command(r, "rg -n 'makePinger(' packages", 55, "packages/client-runtime/src/rpc/session.ts:212:  const pinger = makePinger(socket)\npackages/server/src/ws.ts:88:  yield* makePinger(conn)"),
+            command(r, "sed -n 80,110p packages/server/src/ws.ts", 20, running = true),
+        )
+        val thread = allThreads.getValue("a1")
+        return ThreadState(
+            sequence = 3, thread = thread,
+            runs = mapOf(r to Run(r, "a1", 1, status = "running", startedAt = ago(64), workStartedAt = ago(64))),
+            items = items.associateBy { it.id }, synchronized = true,
+        )
+    }
+
+    /** The fork of t1, with a finished run that can be merged back. */
+    fun forkState(): ThreadState {
+        ordinal = 500
+        val r = "run-f1"
+        val items = listOf(
+            user(r, "Try replacing the hand-rolled timer with vitest fake timers instead.", 400),
+            assistant(r, "Switched the keepalive test to `vi.useFakeTimers()`; it passes 50/50 runs and drops the custom clock helper.", 310),
+        )
+        return ThreadState(sequence = 4, thread = forkThread, runs = mapOf(r to Run(r, "f1", 1, status = "completed", startedAt = ago(400), completedAt = ago(300))), items = items.associateBy { it.id }, synchronized = true)
+    }
+
+    /** An agent asking for an API key while a follow-up waits in the queue. */
+    fun secretState(): ThreadState {
+        ordinal = 600
+        val r = "run-s"
+        val r2 = "run-s2"
+        val items = listOf(
+            user(r, "Wire the webhook tests up to Stripe's test mode.", 200),
+            reasoning(r, "The integration suite needs a Stripe test key; I'll ask for it instead of hard-coding one.", 190),
+            item("secret_request", r, status = "waiting", startedSec = 180, extra = mapOf(
+                "label" to s("STRIPE_TEST_KEY"), "reason" to s("Needed to run the webhook integration tests against Stripe's test mode."),
+                "placeholder" to s("sk_test_…"), "secretStatus" to s("pending"),
+            )),
+        )
+        val thread = threads[1].thread.copy(pendingRuntimeRequest = null)
+        val msg = codes.t3.android.data.model.ConversationMessage("m-q", r2, "user", "Then add a test for the 429 retry path too.")
+        return ThreadState(
+            sequence = 6, thread = thread,
+            runs = mapOf(r to Run(r, thread.id, 1, status = "waiting", startedAt = ago(200)), r2 to Run(r2, thread.id, 2, status = "queued", userMessageId = "m-q", queuePosition = 0)),
+            messages = mapOf("m-q" to msg), items = items.associateBy { it.id }, synchronized = true,
+        )
+    }
+
+    val gitStatus = codes.t3.android.data.GitStatus(
+        isRepo = true, hasPrimaryRemote = true, refName = "t3/8f2a91c4", hasWorkingTreeChanges = true,
+        workingTree = codes.t3.android.data.GitWorkingTree(
+            listOf(
+                codes.t3.android.data.GitFile("packages/client-runtime/src/rpc/session.ts", 6, 3),
+                codes.t3.android.data.GitFile("packages/client-runtime/src/rpc/session.test.ts", 33, 2),
+            ),
+            39, 5,
+        ),
+        hasUpstream = true, aheadCount = 1, behindCount = 0, aheadOfDefaultCount = 3,
+    )
 
     fun approvalState(): ThreadState {
         ordinal = 100

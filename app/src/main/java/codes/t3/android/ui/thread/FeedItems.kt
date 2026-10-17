@@ -27,7 +27,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.CallSplit
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -97,13 +99,17 @@ data class FeedActions(
     val loadImage: suspend (JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
     /** Opens the diff for a checkpoint item (by its checkpointId), when the turn count is known. */
     val onViewDiff: ((String) -> Unit)? = null,
+    /** Opens a subagent's own thread. */
+    val onOpenThread: ((String) -> Unit)? = null,
+    /** Forks the thread from a finished response; null when the provider can't. */
+    val onFork: ((TurnItem) -> Unit)? = null,
 )
 
 @Composable
 fun FeedRow(entry: FeedEntry, wrapCode: Boolean, actions: FeedActions, modifier: Modifier = Modifier) {
     when (entry) {
         is FeedEntry.User -> UserBubble(entry.item, modifier, actions)
-        is FeedEntry.Assistant -> AssistantMessage(entry.item, entry.final, wrapCode, modifier)
+        is FeedEntry.Assistant -> AssistantMessage(entry.item, entry.final, wrapCode, modifier, actions.onFork)
         is FeedEntry.Work -> WorkGroup(entry, modifier, actions)
         is FeedEntry.Fold -> FoldRow(entry, wrapCode, actions, modifier)
         is FeedEntry.Plan -> PlanCard(entry.item, actions, modifier)
@@ -190,13 +196,19 @@ private fun CopyButton(text: String, onCopy: () -> Unit) {
 }
 
 @Composable
-fun AssistantMessage(item: TurnItem, final: Boolean, wrapCode: Boolean, modifier: Modifier = Modifier) {
+fun AssistantMessage(item: TurnItem, final: Boolean, wrapCode: Boolean, modifier: Modifier = Modifier, onFork: ((TurnItem) -> Unit)? = null) {
     val clipboard = LocalClipboardManager.current
     Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         SelectionContainer { T3Markdown(item.text, wrapCode = wrapCode) }
         if (final && !item.streaming) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CopyButton(item.text) { clipboard.setText(AnnotatedString(item.text)) }
+                if (onFork != null && item.runId != null && item.status == "completed") {
+                    val haptics = rememberHaptics()
+                    IconButton(onClick = { haptics.contextClick(); onFork(item) }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Rounded.CallSplit, "Fork from here", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 Text(
                     clockTime(item.completedAt ?: item.updatedAt),
                     style = MaterialTheme.typography.labelSmall,
@@ -240,10 +252,15 @@ private fun workLabelByType(item: TurnItem): String = when (item.type) {
     "file_search" -> item.str("pattern")?.let { "Searched “$it”" } ?: item.title ?: "Searched files"
     "web_search" -> item.arr("patterns")?.firstOrNull()?.let { (it as? JsonPrimitive)?.contentOrNull }?.let { "Searched the web for “$it”" } ?: "Searched the web"
     "reasoning" -> if (item.isRunning) "Thinking" else "Thought"
-    "subagent" -> "Subagent: " + (item.str("prompt")?.lineSequence()?.firstOrNull() ?: "task")
+    "subagent" -> "Subagent: " + codes.t3.android.data.state.subagentTitle(item.title, item.str("prompt").orEmpty())
     "approval_request" -> "Approval requested"
     "user_input_request" -> "Input requested"
-    "secret_request" -> item.str("label") ?: "Secret requested"
+    "secret_request" -> (item.str("label") ?: "Secret requested") + when (item.str("secretStatus")) {
+        "saved" -> " · Saved securely and kept private"
+        "declined" -> " · Declined"
+        "cancelled" -> " · Request ended"
+        else -> ""
+    }
     "notification" -> item.str("summary") ?: "Notification"
     "dynamic_tool" -> item.title ?: item.toolName ?: "Used a tool"
     else -> item.title ?: item.type.replace('_', ' ')
@@ -323,12 +340,17 @@ fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
     val shown = full ?: item
     val failed = item.isFailed && item.status != "running"
     val hasDetail = !item.isWorkspacePrep() && detailText(shown) != null
+    // A subagent with its own thread opens it, like the agents list in the upstream apps.
+    val childThread = item.str("childThreadId")?.takeIf { item.type == "subagent" && actions.onOpenThread != null }
     Column(Modifier.fillMaxWidth().animateContentSize()) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .clickable(enabled = hasDetail) { expanded = !expanded; haptics.tick() }
+                .clickable(enabled = hasDetail || childThread != null) {
+                    haptics.tick()
+                    if (childThread != null) actions.onOpenThread?.invoke(childThread) else expanded = !expanded
+                }
                 .padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -355,6 +377,7 @@ fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
                 )
             }
             if (item.type == "file_change") DiffStat(item.additions, item.deletions)
+            if (childThread != null) Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Open agent thread", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (expanded) {
             val detail = detailText(shown)

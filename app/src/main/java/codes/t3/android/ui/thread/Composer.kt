@@ -88,6 +88,10 @@ data class ComposerModel(
     val defaultFollowUp: SendMode = SendMode.Queue,
     val enabled: Boolean = true,
     val placeholder: String = "Ask the agent, or run a command…",
+    /** How full the thread's context window is, when the provider reports it. */
+    val context: ContextUsage? = null,
+    /** Built-in `/` commands offered alongside the provider's own. */
+    val builtins: List<ComposerCommand> = emptyList(),
 )
 
 fun ComposerModel.provider(): ServerProvider? = providers.firstOrNull { it.instanceId == selection?.instanceId }
@@ -122,6 +126,9 @@ fun Composer(
     attachments: List<codes.t3.android.ui.app.PendingAttachment> = emptyList(),
     onAddAttachment: (() -> Unit)? = null,
     onRemoveAttachment: (String) -> Unit = {},
+    /** A built-in command was picked from the `/` menu (`model`, `plan`, `default`, `usage-limits`). */
+    onBuiltin: (String) -> Unit = {},
+    onOpenUsage: (() -> Unit)? = null,
 ) {
     val haptics = LocalHapticFeedback.current
     val h = rememberHaptics()
@@ -140,6 +147,13 @@ fun Composer(
     ) {
         Column(Modifier.padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)) {
             leading?.invoke()
+            val suggestions = remember(text, model.provider(), model.builtins) { commandSuggestions(text, model.provider(), model.builtins) }
+            if (suggestions != null && model.enabled) {
+                CommandSuggestions(suggestions, onPick = { c ->
+                    h.tick()
+                    if (c.kind == CommandKind.Builtin) { onTextChange(""); onBuiltin(c.id) } else onTextChange(c.insertText)
+                })
+            }
             if (attachments.isNotEmpty()) AttachmentStrip(attachments) { h.tick(); onRemoveAttachment(it) }
             Box(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 if (text.isEmpty()) {
@@ -181,6 +195,8 @@ fun Composer(
                         )
                     }
                     RuntimeChip(model.runtimeMode, model.provider()?.supportedRuntimeModes) { h.tick(); onRuntimeMode(it) }
+                    val context = model.context
+                    if (context != null && onOpenUsage != null) ContextChip(context) { h.contextClick(); onOpenUsage() }
                 }
                 AnimatedVisibility(model.running && model.canStop, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
                     FilledTonalIconButton(

@@ -28,9 +28,23 @@ data class ThreadEntry(
     val environmentLabel: String,
     val thread: ThreadShell,
     val project: ProjectShell?,
+    /** Subagent threads of this one that are still working (subagent threads themselves stay out of the inbox). */
+    val runningAgents: Int = 0,
 )
 
-data class ProjectEntry(val environmentId: String, val environmentLabel: String, val project: ProjectShell)
+data class ProjectEntry(
+    val environmentId: String,
+    val environmentLabel: String,
+    val project: ProjectShell,
+    /** The server's folder for threads without a project ("No project"). */
+    val isScratch: Boolean = false,
+)
+
+/** Whether [project] is the environment's scratch project, i.e. lives at the server's `scratchWorkspaceRoot`. */
+fun isScratchProject(project: ProjectShell?, scratchWorkspaceRoot: String?): Boolean {
+    if (project == null || scratchWorkspaceRoot.isNullOrBlank()) return false
+    return project.workspaceRoot.trimEnd('/', '\\') == scratchWorkspaceRoot.trimEnd('/', '\\')
+}
 
 /** Snapshot of one environment for the UI. */
 data class EnvironmentSnapshot(
@@ -84,6 +98,9 @@ class T3Repository(
 
     fun connection(environmentId: String): EnvironmentConnection? = _connections.value[environmentId]
 
+    /** Old (≤ 0.0.45) servers speak orchestration v1, which has no forks, subagents or git actions. */
+    fun isV1(environmentId: String): Boolean = connection(environmentId)?.protocol == 1
+
     val environmentSnapshots: Flow<List<EnvironmentSnapshot>> =
         combine(savedEnvironments, _connections) { saved, conns -> saved.orEmpty() to conns }
             .flatMapLatest { (saved, conns) ->
@@ -111,15 +128,16 @@ class T3Repository(
     val projects: Flow<List<ProjectEntry>> = _connections.flatMapLatest { conns ->
         if (conns.isEmpty()) return@flatMapLatest flowOf(emptyList())
         combine(conns.values.map { conn ->
-            combine(conn.shell, savedEnvironments) { shell, _ ->
-                shell.projects.values.map { ProjectEntry(conn.environmentId, conn.environment.label, it) }
+            combine(conn.shell, conn.config, savedEnvironments) { shell, config, _ ->
+                shell.projects.values.map { ProjectEntry(conn.environmentId, conn.environment.label, it, isScratchProject(it, config?.scratchWorkspaceRoot)) }
             }
         }) { lists -> lists.flatMap { it } }
     }
 
     /** [projects] as of right now, for building a screen's first frame without waiting on the flow. */
     fun currentProjects(): List<ProjectEntry> = _connections.value.values.flatMap { conn ->
-        conn.shell.value.projects.values.map { ProjectEntry(conn.environmentId, conn.environment.label, it) }
+        val scratchRoot = conn.config.value?.scratchWorkspaceRoot
+        conn.shell.value.projects.values.map { ProjectEntry(conn.environmentId, conn.environment.label, it, isScratchProject(it, scratchRoot)) }
     }
 
     /** Validate, exchange the one-time code, and save. Returns the saved environment. */

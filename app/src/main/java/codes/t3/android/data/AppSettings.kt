@@ -27,6 +27,10 @@ data class AppSettings(
     val showSettled: Boolean = true,
     /** Upstream keeps the Plan/Build toggle behind a legacy switch; `/plan` and `/default` still work. */
     val legacyPlanMode: Boolean = false,
+    /** Alerts when a thread needs approval or input, fails, or finishes. */
+    val notifications: Boolean = true,
+    /** Whether the notification permission was already requested once, so it isn't asked on every launch. */
+    val notificationsAsked: Boolean = false,
 )
 
 class AppSettingsRepository(private val store: DataStore<Preferences>) {
@@ -39,6 +43,8 @@ class AppSettingsRepository(private val store: DataStore<Preferences>) {
         val wrapCode = booleanPreferencesKey("wrapCode")
         val showSettled = booleanPreferencesKey("showSettled")
         val legacyPlanMode = booleanPreferencesKey("legacyPlanMode")
+        val notifications = booleanPreferencesKey("notifications")
+        val notificationsAsked = booleanPreferencesKey("notificationsAsked")
     }
 
     val settings: Flow<AppSettings> = store.data.map { read(it) }
@@ -52,6 +58,8 @@ class AppSettingsRepository(private val store: DataStore<Preferences>) {
         wrapCode = p[Keys.wrapCode] ?: false,
         showSettled = p[Keys.showSettled] ?: true,
         legacyPlanMode = p[Keys.legacyPlanMode] ?: false,
+        notifications = p[Keys.notifications] ?: true,
+        notificationsAsked = p[Keys.notificationsAsked] ?: false,
     )
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
@@ -65,6 +73,8 @@ class AppSettingsRepository(private val store: DataStore<Preferences>) {
             p[Keys.wrapCode] = next.wrapCode
             p[Keys.showSettled] = next.showSettled
             p[Keys.legacyPlanMode] = next.legacyPlanMode
+            p[Keys.notifications] = next.notifications
+            p[Keys.notificationsAsked] = next.notificationsAsked
         }
     }
 }

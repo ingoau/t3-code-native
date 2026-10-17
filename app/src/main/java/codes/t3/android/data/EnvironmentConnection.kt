@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -420,6 +421,12 @@ class EnvironmentConnection(
     suspend fun call(tag: String, payload: JsonElement = JsonObject(emptyMap())): JsonElement {
         val rpc = session.value ?: withTimeoutOrFail(10_000, "waiting for the connection") { awaitSession() }
         return rpc.call(tag, payload)
+    }
+
+    /** A streaming RPC on the current session (e.g. `git.runStackedAction` progress). */
+    fun stream(tag: String, payload: JsonElement = JsonObject(emptyMap())): Flow<JsonElement> = kotlinx.coroutines.flow.flow {
+        val rpc = session.value ?: withTimeoutOrFail(10_000, "waiting for the connection") { awaitSession() }
+        emitAll(rpc.stream(tag, payload))
     }
 
     suspend fun dispatch(command: JsonObject): JsonElement = call("orchestration.dispatchCommand", command)

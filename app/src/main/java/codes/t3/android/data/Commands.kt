@@ -122,6 +122,38 @@ object Commands {
         put("targetRunId", targetRunId)
     }
     fun resumeQueue(threadId: String) = command("queue.resume", threadId)
+    fun editQueued(threadId: String, runId: String, text: String) = command("queued-run.edit", threadId) {
+        put("runId", runId)
+        put("text", text)
+    }
+
+    /** Stops one provider-native subagent (it runs inside the parent's run). */
+    fun stopSubagent(threadId: String, runId: String, subagentId: String) = command("subagent.stop", threadId) {
+        put("runId", runId)
+        put("subagentId", subagentId)
+    }
+
+    /** Fork [sourceThreadId] after [runId] into a new thread. Fork and merge-back name both threads instead of `threadId`. */
+    fun fork(sourceThreadId: String, targetThreadId: String, runId: String, title: String?) = buildJsonObject {
+        put("type", "thread.fork")
+        put("commandId", newId())
+        put("createdBy", "user")
+        put("creationSource", "mobile")
+        put("sourceThreadId", sourceThreadId)
+        put("targetThreadId", targetThreadId)
+        put("sourcePoint", buildJsonObject { put("type", "run"); put("runId", runId) })
+        title?.takeIf { it.isNotBlank() }?.let { put("title", it) }
+    }
+
+    fun mergeBack(sourceThreadId: String, targetThreadId: String, runId: String) = buildJsonObject {
+        put("type", "thread.merge_back")
+        put("commandId", newId())
+        put("createdBy", "user")
+        put("creationSource", "mobile")
+        put("sourceThreadId", sourceThreadId)
+        put("targetThreadId", targetThreadId)
+        put("sourcePoint", buildJsonObject { put("type", "run"); put("runId", runId) })
+    }
 
     sealed interface Workspace {
         data class Root(val branch: String? = null) : Workspace
