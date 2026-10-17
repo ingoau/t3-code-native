@@ -12,6 +12,7 @@ import codes.t3.android.data.AppSettings
 import codes.t3.android.data.ConnectionStatus
 import codes.t3.android.data.model.RuntimeMode
 import codes.t3.android.data.state.ThreadState
+import codes.t3.android.data.state.deriveLineage
 import codes.t3.android.ui.environments.AddEnvironmentScreen
 import codes.t3.android.ui.environments.EnvironmentsScreen
 import codes.t3.android.ui.home.HomeScreen
@@ -67,6 +68,7 @@ class ScreenshotTest {
     private fun Home(state: HomeUiState = home()) = HomeScreen(state, {}, {}, {}, {}, {}, { _, _ -> }, {})
 
     private fun threadState(detail: ThreadState, title: String, subtitle: String) = ThreadUiState(
+        lineage = deriveLineage(detail.thread?.id.orEmpty(), Fixtures.allThreads, detail.subagents.values),
         title = title,
         subtitle = subtitle,
         shell = detail.thread,
@@ -160,6 +162,66 @@ class ScreenshotTest {
         render(true) { NewThreadScreen(state, NewThreadCallbacks()) }
         capture("11_new_thread")
     }
+
+    @Test fun thread_agents() {
+        render(false) { ThreadScreen(threadState(Fixtures.agentsState(), "Fix flaky websocket reconnect test", "t3code · Julius's MacBook Pro"), ThreadCallbacks(), "t1") }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("Subagent: Review", substring = true).performClick()
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        capture("18_thread_agents")
+    }
+
+    @Test fun thread_lineage() {
+        render(true) { ThreadScreen(threadState(Fixtures.agentsState(), "Fix flaky websocket reconnect test", "t3code · Julius's MacBook Pro"), ThreadCallbacks(), "t1") }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithContentDescription("Lineage").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(2_000)
+        compose.onNodeWithText("Previous agents", substring = true).performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(1_000)
+        captureScreen("19_thread_lineage")
+    }
+
+    @Test fun thread_subagent() {
+        render(false) {
+            ThreadScreen(
+                threadState(Fixtures.subagentState(), "Explore: find every caller of makePinger", "Subagent · t3code · Julius's MacBook Pro")
+                    .let { it.copy(composer = it.composer.copy(selection = codes.t3.android.data.model.ModelSelection("claudeAgent", "claude-sonnet-5-5"))) },
+                ThreadCallbacks(),
+                "a1",
+            )
+        }
+        capture("20_thread_subagent")
+    }
+
+    @Test fun new_thread_no_project_picker() {
+        render(false) { NewThreadScreen(noProjectState(selected = Fixtures.projectEntries.first()), NewThreadCallbacks()) }
+        compose.mainClock.autoAdvance = true
+        compose.onNodeWithText("t3code").performClick()
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(2_000)
+        captureScreen("21_new_thread_no_project_picker")
+    }
+
+    @Test fun new_thread_no_project() {
+        render(true) {
+            NewThreadScreen(noProjectState(selected = codes.t3.android.data.ProjectEntry(Fixtures.ENV, Fixtures.saved.label, Fixtures.scratchProject, isScratch = true)), NewThreadCallbacks())
+        }
+        capture("22_new_thread_no_project")
+    }
+
+    private fun noProjectState(selected: codes.t3.android.data.ProjectEntry) = NewThreadUiState(
+        projects = Fixtures.projectEntries,
+        selected = selected,
+        showEnvironment = false,
+        scratch = listOf(codes.t3.android.ui.newthread.ScratchOption(Fixtures.ENV, Fixtures.saved.label)),
+        composer = ComposerModel(Fixtures.providers, Fixtures.selection, RuntimeMode.AutoEdits),
+        showPlanToggle = false,
+        branch = "main",
+        branches = listOf(BranchRef("main", true, true, false)),
+    )
 
     @Test fun add_environment() {
         render(false) { AddEnvironmentScreen(initialLink = null, connecting = false, error = null, onBack = {}, onConnect = {}) }

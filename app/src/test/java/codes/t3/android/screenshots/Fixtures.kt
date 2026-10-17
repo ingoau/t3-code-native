@@ -21,6 +21,8 @@ import codes.t3.android.data.model.Run
 import codes.t3.android.data.model.RuntimeRequest
 import codes.t3.android.data.model.ServerConfig
 import codes.t3.android.data.model.ServerProvider
+import codes.t3.android.data.model.Subagent
+import codes.t3.android.data.model.ThreadLineage
 import codes.t3.android.data.model.ThreadShell
 import codes.t3.android.data.model.TurnItem
 import codes.t3.android.data.state.ThreadState
@@ -124,7 +126,51 @@ object Fixtures {
         thread("t8", "p-web", "Write release notes for 0.0.46", 3600 * 72, settled = true),
         thread("t9", "p-t3", "Investigate memory growth in the terminal service", 3600 * 120, settled = true),
         thread("t10", "p-dot", "Configure Tailscale Serve for the build box", 3600 * 200, settled = true),
-    ).map { ThreadEntry(ENV, saved.label, it, project(it.projectId)) }
+    ).plus(subagentThreads()).map { ThreadEntry(ENV, saved.label, it, project(it.projectId)) }
+
+    /** Agents the main demo thread (t1) spawned; the inbox hides them but badges t1. */
+    private fun subagentThreads(): List<ThreadShell> = listOf(
+        agentThread("a1", "Explore: find every caller of makePinger", "running", startedSec = 64),
+        agentThread("a2", "Review: audit the fake clock helpers", "running", startedSec = 41),
+        agentThread("a3", "Run the full client-runtime suite", "completed", startedSec = 560, durationSec = 74),
+        agentThread("a4", "Bisect the CI flake across the last 20 runs", "failed", startedSec = 540, durationSec = 22),
+    )
+
+    private fun agentThread(id: String, title: String, status: String, startedSec: Long, durationSec: Long = 0) = ThreadShell(
+        id = id, projectId = "p-t3", title = title, status = status, creationSource = "provider", createdBy = "agent",
+        lineage = ThreadLineage(parentThreadId = "t1", relationshipToParent = "subagent", rootThreadId = "t1"),
+        modelSelection = ModelSelection("claudeAgent", "claude-sonnet-5-5"), providerInstanceId = "claudeAgent",
+        activeRunId = if (status == "running") "run-$id" else null,
+        activityRunStatus = if (status == "running") "running" else null,
+        activityRunStartedAt = if (status == "running") ago(startedSec) else null,
+        latestRunStartedAt = ago(startedSec),
+        latestRunCompletedAt = if (status == "running") null else ago(startedSec - durationSec),
+        createdAt = ago(startedSec), updatedAt = ago(startedSec - durationSec), branch = "t3/8f2a91c4",
+    )
+
+    /** A fork of t1, shown under Forks in its lineage. */
+    val forkThread = ThreadShell(
+        id = "f1", projectId = "p-t3", title = "Try a fake-timers approach instead", status = "completed",
+        lineage = ThreadLineage(parentThreadId = "t1", relationshipToParent = "fork", rootThreadId = "t1"),
+        createdAt = ago(400), updatedAt = ago(300), latestRunCompletedAt = ago(300),
+    )
+
+    val allThreads: Map<String, ThreadShell> = (threads.map { it.thread } + forkThread).associateBy { it.id }
+
+    /** Projection records for t1's agents, including one the provider ran inline (no thread of its own). */
+    val subagents: List<Subagent> = subagentThreads().map { t ->
+        Subagent(
+            id = "node-${t.id}", threadId = "t1", origin = "provider_native", driver = "claudeAgent", providerInstanceId = "claudeAgent",
+            childThreadId = t.id, prompt = t.title, title = t.title, model = "claude-sonnet-5-5", status = t.status,
+            progress = if (t.id == "a1") "Reading rpc/session.ts" else null,
+            startedAt = t.latestRunStartedAt, completedAt = t.latestRunCompletedAt, updatedAt = t.updatedAt,
+        )
+    } + Subagent(
+        id = "node-inline", threadId = "t1", origin = "provider_native", driver = "claudeAgent", childThreadId = null,
+        prompt = "Summarise the failing CI logs", status = "completed", startedAt = ago(590), completedAt = ago(575), updatedAt = ago(575),
+    )
+
+    val scratchProject = ProjectShell("p-scratch", "No project", "/Users/julius/.t3/scratch")
 
     val projectEntries = projects.map { ProjectEntry(ENV, saved.label, it) }
 
@@ -241,6 +287,41 @@ object Fixtures {
         }
         val thread = threads.first().thread.let { if (live) it else it.copy(status = "completed", activeRunId = null) }
         return ThreadState(sequence = 10, thread = thread, runs = runs, items = items.associateBy { it.id }, synchronized = true)
+    }
+
+    /** t1 mid-run with subagents working, as in the desktop app's Lineage panel. */
+    fun agentsState(): ThreadState {
+        val base = conversationState(live = true)
+        val r2 = "run-2"
+        val agents = subagentThreads().filter { it.status == "running" }.map { t ->
+            item("subagent", r2, status = "running", startedSec = 64, extra = mapOf(
+                "subagentId" to s("node-${t.id}"), "childThreadId" to s(t.id), "title" to s(t.title), "prompt" to s(t.title),
+                "origin" to s("provider_native"), "driver" to s("claudeAgent"),
+            ))
+        }
+        return base.copy(
+            items = base.items + agents.associateBy { it.id },
+            subagents = subagents.associateBy { it.id },
+        )
+    }
+
+    /** One of t1's agents, opened: it runs on its own, so the composer gives way to a status bar. */
+    fun subagentState(): ThreadState {
+        ordinal = 400
+        val r = "run-a1"
+        val items = listOf(
+            user(r, "Find every caller of makePinger in packages/ and report how each one handles a missed pong.", 64),
+            reasoning(r, "Searching the workspace for makePinger and its call sites.", 62),
+            search(r, "makePinger", 60),
+            command(r, "rg -n 'makePinger(' packages", 55, "packages/client-runtime/src/rpc/session.ts:212:  const pinger = makePinger(socket)\npackages/server/src/ws.ts:88:  yield* makePinger(conn)"),
+            command(r, "sed -n 80,110p packages/server/src/ws.ts", 20, running = true),
+        )
+        val thread = allThreads.getValue("a1")
+        return ThreadState(
+            sequence = 3, thread = thread,
+            runs = mapOf(r to Run(r, "a1", 1, status = "running", startedAt = ago(64), workStartedAt = ago(64))),
+            items = items.associateBy { it.id }, synchronized = true,
+        )
     }
 
     fun approvalState(): ThreadState {

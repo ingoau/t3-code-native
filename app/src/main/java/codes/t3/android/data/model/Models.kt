@@ -175,6 +175,10 @@ data class LatestVisibleMessage(val id: String, val role: String, val text: Stri
 @Serializable
 data class ThreadLineage(val parentThreadId: String? = null, val relationshipToParent: String? = null, val rootThreadId: String? = null)
 
+/** Where a fork came from. Only `run` forks name their source thread; other kinds are ignored here. */
+@Serializable
+data class ForkedFrom(val type: String = "", val threadId: String? = null, val runId: String? = null)
+
 @Serializable
 data class PullRequestRef(val number: Int? = null, val url: String? = null, val state: String? = null)
 
@@ -193,6 +197,7 @@ data class ThreadShell(
     val worktreePath: String? = null,
     val linkedPullRequest: PullRequestRef? = null,
     val lineage: ThreadLineage? = null,
+    val forkedFrom: ForkedFrom? = null,
     val latestRunId: String? = null,
     val latestRunStartedAt: String? = null,
     val latestRunCompletedAt: String? = null,
@@ -224,6 +229,14 @@ data class ThreadShell(
     val isSettled: Boolean get() = settledAt != null && settledOverride != "active"
     val isSnoozed: Boolean get() = snoozedUntil != null
     val isSubagent: Boolean get() = lineage?.relationshipToParent == "subagent"
+    val isFork: Boolean get() = lineage?.relationshipToParent == "fork"
+
+    /** A subagent the provider started on its own (e.g. Claude's Task tool). It runs by itself and takes no messages. */
+    val isProviderSubagent: Boolean get() = isSubagent && creationSource == "provider"
+
+    /** The thread this one was forked from or spawned by, as upstream resolves it. */
+    val parentThreadId: String?
+        get() = forkedFrom?.takeIf { it.type == "run" }?.threadId ?: lineage?.parentThreadId
 }
 
 val WorkingStatuses = setOf("preparing", "queued", "starting", "running", "waiting")
@@ -299,6 +312,34 @@ data class RuntimeRequest(
 @Serializable
 data class Checkpoint(val id: String, val appRunOrdinal: Int? = null, val status: String = "ready", val runId: String? = null)
 
+/**
+ * A delegated agent run by this thread. Provider-native subagents may have no [childThreadId]: their work only shows
+ * in the parent's transcript.
+ */
+@Serializable
+data class Subagent(
+    val id: String,
+    val threadId: String = "",
+    val runId: String? = null,
+    val origin: String = "provider_native",
+    val driver: String? = null,
+    val providerInstanceId: String? = null,
+    val childThreadId: String? = null,
+    val prompt: String = "",
+    val title: String? = null,
+    val model: String? = null,
+    val status: String = "pending",
+    val progress: String? = null,
+    val result: String? = null,
+    val startedAt: String? = null,
+    val completedAt: String? = null,
+    val updatedAt: String? = null,
+) {
+    val isActive: Boolean get() = status in ActiveSubagentStatuses
+}
+
+val ActiveSubagentStatuses = setOf("pending", "running", "waiting")
+
 @Serializable
 data class ConversationMessage(
     val id: String,
@@ -329,6 +370,7 @@ data class ThreadProjection(
     val runtimeRequests: List<RuntimeRequest> = emptyList(),
     val messages: List<ConversationMessage> = emptyList(),
     val checkpoints: List<Checkpoint> = emptyList(),
+    val subagents: List<Subagent> = emptyList(),
     val turnItems: List<TurnItem> = emptyList(),
     val visibleTurnItems: List<ProjectedTurnItem> = emptyList(),
     val updatedAt: String? = null,

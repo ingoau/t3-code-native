@@ -52,6 +52,7 @@ import androidx.compose.material.icons.rounded.MarkEmailUnread
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material.icons.rounded.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -116,6 +117,7 @@ import codes.t3.android.ui.util.badge
 import codes.t3.android.ui.util.color
 import codes.t3.android.ui.util.containerColor
 import codes.t3.android.ui.util.relativeAge
+import codes.t3.android.data.state.runningAgentsByParent
 
 data class HomeUiState(
     val environmentsLoaded: Boolean = false,
@@ -168,8 +170,12 @@ fun HomeScreen(
     val fabExpanded by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
     val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
 
+    val agentCounts = remember(state.threads) {
+        state.threads.groupBy { it.environmentId }.mapValues { (_, list) -> runningAgentsByParent(list.map { it.thread }) }
+    }
     val visible = state.threads
         .filter { it.thread.archivedAt == null && !it.thread.isSubagent }
+        .map { e -> agentCounts[e.environmentId]?.get(e.thread.id)?.let { e.copy(runningAgents = it) } ?: e }
         .filter { projectFilter == null || it.project?.id == projectFilter }
         .filter {
             query.isBlank() || it.thread.title.contains(query, true) ||
@@ -615,9 +621,20 @@ fun ThreadRow(
                         )
                     }
                     val envLabel = entry.environmentLabel.takeIf { showEnvironment }
-                    if (thread.branch != null || envLabel != null) {
+                    if (thread.branch != null || envLabel != null || entry.runningAgents > 0) {
                         Spacer(Modifier.height(6.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (entry.runningAgents > 0) {
+                                Icon(Icons.Rounded.SmartToy, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (entry.runningAgents == 1) "1 agent running" else "${entry.runningAgents} agents running",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                )
+                                if (thread.branch != null || envLabel != null) Text("  ·  ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             if (thread.branch != null) {
                                 Icon(Icons.Rounded.CallSplit, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.width(4.dp))

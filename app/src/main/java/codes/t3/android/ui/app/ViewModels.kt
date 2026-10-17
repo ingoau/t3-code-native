@@ -23,10 +23,13 @@ import codes.t3.android.data.model.TurnItem
 import codes.t3.android.data.pairing.PairingTarget
 import codes.t3.android.data.rpc.RpcException
 import codes.t3.android.data.state.ThreadState
+import codes.t3.android.data.state.deriveLineage
+import codes.t3.android.data.isScratchProject
 import codes.t3.android.ui.home.HomeUiState
 import codes.t3.android.ui.home.ThreadAction
 import codes.t3.android.ui.newthread.BranchRef
 import codes.t3.android.ui.newthread.NewThreadUiState
+import codes.t3.android.ui.newthread.ScratchOption
 import codes.t3.android.ui.newthread.WorkspaceMode
 import codes.t3.android.ui.thread.ComposerModel
 import codes.t3.android.ui.thread.SendMode
@@ -39,6 +42,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -158,20 +162,21 @@ class ThreadViewModel(
     private val connection: Flow<EnvironmentConnection?> = repository.connections.map { it[environmentId] }.distinctUntilChanged()
 
     private val detail: Flow<ThreadState> = connection.flatMapLatest { it?.observeThread(threadId) ?: flowOf(ThreadState(error = "Environment is not connected")) }
-    private val shellEntry = connection.flatMapLatest { c -> c?.shell?.map { s -> s.threads[threadId] to s.projects } ?: flowOf(null to emptyMap()) }
+    private val shellEntry = connection.flatMapLatest { c -> c?.shell?.map { s -> s.threads to s.projects } ?: flowOf(emptyMap<String, ThreadShell>() to emptyMap()) }
     private val status: Flow<ConnectionStatus> = connection.flatMapLatest { it?.status ?: flowOf(ConnectionStatus.Disabled) }
     private val config: Flow<ServerConfig?> = connection.flatMapLatest { it?.config ?: flowOf(null) }
 
     val tray = AttachmentTray(viewModelScope, repository)
 
-    private val baseState: Flow<ThreadUiState> = combine(detail, shellEntry, status, config, settingsRepo.settings) { detail, (shell, projects), status, config, settings ->
-        buildState(detail, shell, projects, status, config, settings)
+    private val baseState: Flow<ThreadUiState> = combine(detail, shellEntry, status, config, settingsRepo.settings) { detail, (threads, projects), status, config, settings ->
+        buildState(detail, threads, projects, status, config, settings)
     }
 
     private fun buildState(
-        detail: ThreadState, shell: ThreadShell?, projects: Map<String, ProjectShell>, status: ConnectionStatus,
+        detail: ThreadState, threads: Map<String, ThreadShell>, projects: Map<String, ProjectShell>, status: ConnectionStatus,
         config: ServerConfig?, settings: AppSettings,
     ): ThreadUiState {
+        val shell = threads[threadId]
         val thread = shell ?: detail.thread
         val project = thread?.projectId?.let { projects[it] }
         val envLabel = repository.connection(environmentId)?.environment?.label ?: "environment"
@@ -179,9 +184,12 @@ class ThreadViewModel(
         val selection = thread?.modelSelection ?: config.defaultSelection(project?.defaultModelSelection)
         val provider = providers.firstOrNull { it.instanceId == selection?.instanceId }
         val running = shell?.isWorking == true || detail.activeRun != null
+        val lineage = deriveLineage(threadId, if (shell == null && thread != null) threads + (threadId to thread) else threads, detail.subagents.values)
+        val projectLabel = project?.title?.takeUnless { isScratchProject(project, config?.scratchWorkspaceRoot) } ?: project?.let { "No project" }
         return ThreadUiState(
             title = thread?.title.orEmpty(),
-            subtitle = listOfNotNull(project?.title, envLabel).joinToString(" · "),
+            subtitle = listOfNotNull(if (thread?.isSubagent == true) "Subagent" else null, projectLabel, envLabel).joinToString(" · "),
+            lineage = lineage,
             shell = shell,
             detail = detail,
             connection = status,
@@ -214,7 +222,7 @@ class ThreadViewModel(
         val conn = repository.connection(environmentId) ?: return null
         val shell = conn.shell.value
         return buildState(
-            conn.cachedThread(threadId) ?: ThreadState(), shell.threads[threadId], shell.projects,
+            conn.cachedThread(threadId) ?: ThreadState(), shell.threads, shell.projects,
             conn.status.value, conn.config.value, settings ?: AppSettings(),
         )
     }
@@ -380,15 +388,21 @@ class NewThreadViewModel(
         val sorted = projects.sortedByDescending { it.project.updatedAt }
         val selected = l.key?.let { (e, p) -> sorted.firstOrNull { it.environmentId == e && it.project.id == p } }
             ?: sorted.firstOrNull { it.project.id == preferredProjectId && (preferredEnvironmentId == null || it.environmentId == preferredEnvironmentId) }
+            ?: sorted.firstOrNull { !it.isScratch }
             ?: sorted.firstOrNull()
+        val labels = saved.orEmpty().associate { it.environmentId to it.label }
+        val scratch = configs.filterValues { it?.scratchWorkspaceRoot != null }.keys
+            .map { env -> ScratchOption(env, labels[env] ?: sorted.firstOrNull { it.environmentId == env }?.environmentLabel ?: "environment") }
+            .sortedBy { it.environmentLabel }
         val config = selected?.let { configs[it.environmentId] }
         val providers = config.selectableProviders()
         val selection = l.override?.takeIf { o -> providers.any { it.instanceId == o.instanceId } } ?: config.defaultSelection(selected?.project?.defaultModelSelection)
         val provider = providers.firstOrNull { it.instanceId == selection?.instanceId }
         val defaultRuntime = RuntimeMode.of(config?.settings?.defaultRuntimeMode)
         return NewThreadUiState(
-            projects = sorted,
+            projects = sorted.filterNot { it.isScratch },
             selected = selected,
+            scratch = scratch,
             showEnvironment = (saved?.size ?: 0) > 1,
             composer = ComposerModel(
                 providers = providers,
@@ -441,6 +455,8 @@ class NewThreadViewModel(
 
     fun loadBranches() {
         val selected = state.value?.selected ?: return
+        // The scratch folder isn't a repository; there's no checkout or worktree to choose.
+        if (selected.isScratch) { isRepo.value = false; branches.value = emptyList(); return }
         val conn = repository.connection(selected.environmentId) ?: return
         viewModelScope.launch {
             runCatching {
@@ -462,6 +478,29 @@ class NewThreadViewModel(
                 isRepo.value = false
                 branches.value = emptyList()
             }
+        }
+    }
+
+    /**
+     * "No project": like the desktop app, finds or creates the environment's scratch project (`projects.ensureScratch`)
+     * and selects it once it shows up in the shell, since the thread is launched into its folder.
+     */
+    fun selectScratch(environmentId: String) {
+        repository.currentProjects().firstOrNull { it.environmentId == environmentId && it.isScratch }?.let { return selectProject(it) }
+        val conn = repository.connection(environmentId) ?: return UiEvents.show("Environment is not connected")
+        viewModelScope.launch {
+            runCatching {
+                val result = conn.call("projects.ensureScratch") as JsonObject
+                val projectId = (result["projectId"] as JsonPrimitive).content
+                kotlinx.coroutines.withTimeout(10_000) { conn.shell.first { it.projects.containsKey(projectId) } }
+                projectId
+            }.onSuccess { projectId ->
+                if (state.value?.selected?.environmentId != environmentId) tray.clear()
+                selectedKey.value = environmentId to projectId
+                branch.value = null
+                branches.value = null
+                selectionOverride.value = null
+            }.onFailure { UiEvents.show("Could not start without a project: ${errorText(it)}") }
         }
     }
 
@@ -490,9 +529,10 @@ class NewThreadViewModel(
         if (text.trim().lowercase() in setOf("/default", "/build")) { plan.value = false; return }
         val conn = repository.connection(selected.environmentId) ?: return UiEvents.show("Environment is not connected")
         val threadId = UUID.randomUUID().toString()
-        val workspaceStrategy = when (s.workspace) {
-            WorkspaceMode.Local -> Commands.Workspace.Root(s.branch)
-            WorkspaceMode.Worktree -> Commands.Workspace.NewWorktree(s.branch ?: "HEAD", Commands.worktreeBranch())
+        val workspaceStrategy = when {
+            selected.isScratch -> Commands.Workspace.Root(null)
+            s.workspace == WorkspaceMode.Local -> Commands.Workspace.Root(s.branch)
+            else -> Commands.Workspace.NewWorktree(s.branch ?: "HEAD", Commands.worktreeBranch())
         }
         starting.value = true
         error.value = null

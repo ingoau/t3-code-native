@@ -10,6 +10,7 @@ import codes.t3.android.data.model.ProviderThread
 import codes.t3.android.data.model.Run
 import codes.t3.android.data.model.RunAttempt
 import codes.t3.android.data.model.RuntimeRequest
+import codes.t3.android.data.model.Subagent
 import codes.t3.android.data.model.T3Json
 import codes.t3.android.data.model.ThreadProjection
 import codes.t3.android.data.model.ThreadShell
@@ -37,6 +38,7 @@ data class ThreadState(
     val requests: Map<String, RuntimeRequest> = emptyMap(),
     val messages: Map<String, ConversationMessage> = emptyMap(),
     val checkpoints: Map<String, Checkpoint> = emptyMap(),
+    val subagents: Map<String, Subagent> = emptyMap(),
     val items: Map<String, TurnItem> = emptyMap(),
     /** Rows from parent threads (forks) that precede local items. */
     val inherited: List<TurnItem> = emptyList(),
@@ -116,6 +118,7 @@ data class ThreadState(
         requests = projection.runtimeRequests.associateBy { it.id },
         messages = projection.messages.associateBy { it.id },
         checkpoints = projection.checkpoints.associateBy { it.id },
+        subagents = projection.subagents.associateBy { it.id },
         items = projection.turnItems.associateBy { it.id },
         inherited = projection.visibleTurnItems.filter { it.visibility != "local" }.sortedBy { it.position }.map { it.item },
         synchronized = synchronized,
@@ -174,6 +177,10 @@ data class ThreadState(
             type == "checkpoint.captured" -> {
                 val c = T3Json.decodeFromJsonElement<Checkpoint>(payload)
                 copy(checkpoints = checkpoints + (c.id to c))
+            }
+            type == "subagent.updated" -> {
+                val a = T3Json.decodeFromJsonElement<Subagent>(payload)
+                copy(subagents = subagents + (a.id to a))
             }
             type == "message.updated" -> {
                 val m = T3Json.decodeFromJsonElement<ConversationMessage>(payload)

@@ -145,6 +145,7 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                                 onSteerQueued = vm::steerQueued,
                                 onResumeQueue = vm::resumeQueue,
                                 onDraftRestored = vm::draftRestored,
+                                onOpenThread = { id -> nav.navigate(ThreadRoute(route.environmentId, id)) },
                                 onViewDiff = { from, to, title ->
                                     nav.navigate(DiffRoute(route.environmentId, route.threadId, from, to, title, vm.state.value?.title.orEmpty()))
                                 },
@@ -165,6 +166,7 @@ fun T3NavHost(app: AppViewModel, settingsRepo: AppSettingsRepository, pendingLin
                             NewThreadCallbacks(
                                 onClose = { nav.popBackStack() },
                                 onSelectProject = vm::selectProject,
+                                onSelectNoProject = vm::selectScratch,
                                 onWorkspace = vm::setWorkspace,
                                 onBranch = vm::setBranch,
                                 onLoadBranches = vm::loadBranches,

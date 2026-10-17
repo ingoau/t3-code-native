@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -97,6 +98,8 @@ data class FeedActions(
     val loadImage: suspend (JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
     /** Opens the diff for a checkpoint item (by its checkpointId), when the turn count is known. */
     val onViewDiff: ((String) -> Unit)? = null,
+    /** Opens a subagent's own thread. */
+    val onOpenThread: ((String) -> Unit)? = null,
 )
 
 @Composable
@@ -240,7 +243,7 @@ private fun workLabelByType(item: TurnItem): String = when (item.type) {
     "file_search" -> item.str("pattern")?.let { "Searched “$it”" } ?: item.title ?: "Searched files"
     "web_search" -> item.arr("patterns")?.firstOrNull()?.let { (it as? JsonPrimitive)?.contentOrNull }?.let { "Searched the web for “$it”" } ?: "Searched the web"
     "reasoning" -> if (item.isRunning) "Thinking" else "Thought"
-    "subagent" -> "Subagent: " + (item.str("prompt")?.lineSequence()?.firstOrNull() ?: "task")
+    "subagent" -> "Subagent: " + codes.t3.android.data.state.subagentTitle(item.title, item.str("prompt").orEmpty())
     "approval_request" -> "Approval requested"
     "user_input_request" -> "Input requested"
     "secret_request" -> item.str("label") ?: "Secret requested"
@@ -323,12 +326,17 @@ fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
     val shown = full ?: item
     val failed = item.isFailed && item.status != "running"
     val hasDetail = !item.isWorkspacePrep() && detailText(shown) != null
+    // A subagent with its own thread opens it, like the agents list in the upstream apps.
+    val childThread = item.str("childThreadId")?.takeIf { item.type == "subagent" && actions.onOpenThread != null }
     Column(Modifier.fillMaxWidth().animateContentSize()) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .clickable(enabled = hasDetail) { expanded = !expanded; haptics.tick() }
+                .clickable(enabled = hasDetail || childThread != null) {
+                    haptics.tick()
+                    if (childThread != null) actions.onOpenThread?.invoke(childThread) else expanded = !expanded
+                }
                 .padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -355,6 +363,7 @@ fun WorkRow(item: TurnItem, actions: FeedActions = FeedActions()) {
                 )
             }
             if (item.type == "file_change") DiffStat(item.additions, item.deletions)
+            if (childThread != null) Icon(Icons.AutoMirrored.Rounded.ArrowForward, "Open agent thread", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (expanded) {
             val detail = detailText(shown)

@@ -16,6 +16,12 @@ self-hosted `t3` server, over your LAN or tailnet. There is no T3 Connect, cloud
   <img src="docs/screenshots/16_diff.png" width="24%" />
   <img src="docs/screenshots/11_new_thread.png" width="24%" />
 </p>
+<p>
+  <img src="docs/screenshots/19_thread_lineage.png" width="24%" />
+  <img src="docs/screenshots/18_thread_agents.png" width="24%" />
+  <img src="docs/screenshots/20_thread_subagent.png" width="24%" />
+  <img src="docs/screenshots/21_new_thread_no_project_picker.png" width="24%" />
+</p>
 
 ## Features
 
@@ -43,8 +49,14 @@ self-hosted `t3` server, over your LAN or tailnet. There is no T3 Connect, cloud
   - Send, Queue or Steer while a run is going. Long-press Send to choose between them.
   - Stop button, image attachments, and `/plan` and `/default` commands. A Plan/Build toggle is available behind
     Settings › Legacy, matching upstream.
+- **Subagents and lineage:** like the Lineage panel in the desktop app, a top-bar button (badged with the number of
+  agents still running) opens the thread's parent, running subagents, forks and previous agents, with live status and
+  elapsed time. Tapping one opens its thread. Subagent rows in the feed open their threads too, the working pill
+  counts running agents, and inbox rows show "2 agents running". A subagent the provider started itself replaces the
+  composer with a status bar and an "Open parent" button, since it takes no messages.
 - **Queue:** follow-ups waiting behind the current run, with remove, "steer now" and resume.
-- **New thread:** pick a project (or add a folder on the host), choose the current checkout or a new git worktree,
+- **New thread:** pick a project (or add a folder on the host, or choose **No project** to work in the server's
+  scratch folder, as on the web), choose the current checkout or a new git worktree,
   and pick a branch from the real repository.
 - **Diffs:** per-turn or whole-thread diffs, with sticky file headers and full-width add/remove bands.
 - **Archive, environment management and settings:** theme (System, Light or Dark), Material You or T3 brand colors,

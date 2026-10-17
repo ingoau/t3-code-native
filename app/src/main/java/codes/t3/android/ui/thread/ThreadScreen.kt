@@ -110,6 +110,8 @@ data class ThreadUiState(
     val canAttach: Boolean = false,
     /** Text of a message that failed to send, to put back into the composer. */
     val restoredDraft: String? = null,
+    /** Parent, subagents and forks of this thread. */
+    val lineage: codes.t3.android.data.state.Lineage = codes.t3.android.data.state.Lineage(),
 )
 
 class ThreadCallbacks(
@@ -133,6 +135,8 @@ class ThreadCallbacks(
     val onResumeQueue: () -> Unit = {},
     val onViewDiff: (fromTurn: Int, toTurn: Int, title: String) -> Unit = { _, _, _ -> },
     val onDraftRestored: () -> Unit = {},
+    /** Opens a related thread (parent, subagent or fork) in the same environment. */
+    val onOpenThread: (String) -> Unit = {},
     val loadImage: suspend (kotlinx.serialization.json.JsonObject) -> androidx.compose.ui.graphics.ImageBitmap? = { null },
 )
 
@@ -145,6 +149,7 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
     var pickerOpen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var lineageOpen by remember { mutableStateOf(false) }
     val detail = state.detail
     val activeRunId = state.shell?.activeRunId ?: detail.activeRun?.id
     val feed = remember(detail, activeRunId) { buildFeed(detail.timeline, detail.runs, activeRunId).asReversed() }
@@ -157,6 +162,7 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
     val actions = remember(callbacks, checkpoints) {
         FeedActions(
             onImplementPlan = callbacks.onImplementPlan,
+            onOpenThread = callbacks.onOpenThread,
             loadFullItem = callbacks.loadFullItem,
             loadImage = callbacks.loadImage,
             onViewDiff = { id ->
@@ -192,6 +198,7 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                     }
                 },
                 actions = {
+                    if (!state.lineage.isEmpty) LineageButton(state.lineage) { lineageOpen = true }
                     detail.latestTurnCount?.let { turn ->
                         IconButton(onClick = { callbacks.onViewDiff(0, turn, "All changes") }) { Icon(Icons.Rounded.Difference, "View all changes") }
                     }
@@ -245,7 +252,19 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
                         approvals.firstOrNull()?.let { a -> ApprovalCard(a, onDecision = { callbacks.onApproval(a.requestId, it) }) }
                     }
                     ThreadStateLine(state.shell, callbacks)
-                    if (question != null) {
+                    val shell = state.shell
+                    if (shell != null && shell.isProviderSubagent && question == null) {
+                        val parent = state.lineage.parent
+                        SubagentBar(
+                            shell = shell,
+                            parent = parent,
+                            model = state.composer.selection?.let { sel ->
+                                state.composer.providers.firstOrNull { it.instanceId == sel.instanceId }?.models?.firstOrNull { it.slug == sel.model }?.let { it.shortName ?: it.name } ?: sel.model
+                            },
+                            working = working,
+                            onOpenParent = parent?.threadId?.takeIf { parent.openable }?.let { id -> { callbacks.onOpenThread(id) } },
+                        )
+                    } else if (question != null) {
                         UserInputCard(
                             question,
                             onSubmit = { answers, multi -> callbacks.onAnswer(question.requestId, answers, multi) },
@@ -282,6 +301,9 @@ fun ThreadScreen(state: ThreadUiState, callbacks: ThreadCallbacks, draftKey: Str
             onConfirm = { sel, rt -> pickerOpen = false; callbacks.onModelChange(sel, rt) },
             onDismiss = { pickerOpen = false },
         )
+    }
+    if (lineageOpen) {
+        LineageSheet(state.lineage, onOpenThread = { lineageOpen = false; callbacks.onOpenThread(it) }, onDismiss = { lineageOpen = false })
     }
     if (renaming) {
         RenameDialog(state.title, onDismiss = { renaming = false }) { callbacks.onThreadAction(ThreadAction.Rename(it)); renaming = false }
@@ -367,6 +389,8 @@ private fun StatusPill(
         working -> buildString {
             append(if (shell?.activityRunStatus == "preparing" || run?.status == "preparing") "Preparing" else "Working")
             startedAt?.let { append(" ").append(formatElapsed(Duration.between(it, Instant.ofEpochMilli(now)))) }
+            val agents = state.lineage.runningCount
+            if (agents > 0) append(if (agents == 1) " · 1 agent" else " · $agents agents")
             if (queued > 0) append(" · $queued queued")
         }
         else -> null

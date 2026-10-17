@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CallSplit
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Folder
@@ -79,10 +80,14 @@ data class BranchRef(val name: String, val current: Boolean, val isDefault: Bool
 
 enum class WorkspaceMode { Local, Worktree }
 
+/** An environment that can start a thread without a project (its server has a scratch folder). */
+data class ScratchOption(val environmentId: String, val environmentLabel: String)
+
 data class NewThreadUiState(
     val projects: List<ProjectEntry>,
     val selected: ProjectEntry?,
     val showEnvironment: Boolean,
+    val scratch: List<ScratchOption> = emptyList(),
     val composer: ComposerModel,
     val showPlanToggle: Boolean,
     val workspace: WorkspaceMode = WorkspaceMode.Local,
@@ -98,6 +103,7 @@ data class NewThreadUiState(
 class NewThreadCallbacks(
     val onClose: () -> Unit = {},
     val onSelectProject: (ProjectEntry) -> Unit = {},
+    val onSelectNoProject: (environmentId: String) -> Unit = {},
     val onWorkspace: (WorkspaceMode) -> Unit = {},
     val onBranch: (String) -> Unit = {},
     val onLoadBranches: () -> Unit = {},
@@ -151,7 +157,7 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
 
                     ProjectCard(state, onClick = { projectSheet = true })
 
-                    if (state.selected != null && state.isRepo) {
+                    if (state.selected != null && !state.selected.isScratch && state.isRepo) {
                         Row(horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween), modifier = Modifier.fillMaxWidth()) {
                             ToggleButton(
                                 checked = state.workspace == WorkspaceMode.Local,
@@ -213,6 +219,7 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
         ProjectSheet(
             state,
             onPick = { haptics.tick(); projectSheet = false; callbacks.onSelectProject(it) },
+            onPickNoProject = { haptics.tick(); projectSheet = false; callbacks.onSelectNoProject(it) },
             onAdd = { projectSheet = false; addProject = true },
             onDismiss = { projectSheet = false },
         )
@@ -252,13 +259,15 @@ fun NewThreadScreen(state: NewThreadUiState, callbacks: NewThreadCallbacks) {
 @Composable
 private fun ProjectCard(state: NewThreadUiState, onClick: () -> Unit) {
     val selected = state.selected
+    val scratch = selected?.isScratch == true
     Surface(onClick = onClick, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Folder, null, tint = MaterialTheme.colorScheme.primary)
+            Icon(if (scratch) Icons.Rounded.ChatBubbleOutline else Icons.Rounded.Folder, null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text(selected?.project?.title ?: "Choose a project", style = MaterialTheme.typography.titleMedium)
-                val sub = listOfNotNull(selected?.project?.workspaceRoot, selected?.environmentLabel?.takeIf { state.showEnvironment }).joinToString("  ·  ")
+                Text(if (scratch) "No project" else selected?.project?.title ?: "Choose a project", style = MaterialTheme.typography.titleMedium)
+                val where = if (scratch) "Works in a scratch folder" else selected?.project?.workspaceRoot
+                val sub = listOfNotNull(where, selected?.environmentLabel?.takeIf { state.showEnvironment }).joinToString("  ·  ")
                 if (sub.isNotEmpty()) Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Icon(Icons.Rounded.UnfoldMore, null)
@@ -267,7 +276,13 @@ private fun ProjectCard(state: NewThreadUiState, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ProjectSheet(state: NewThreadUiState, onPick: (ProjectEntry) -> Unit, onAdd: () -> Unit, onDismiss: () -> Unit) {
+private fun ProjectSheet(
+    state: NewThreadUiState,
+    onPick: (ProjectEntry) -> Unit,
+    onPickNoProject: (environmentId: String) -> Unit,
+    onAdd: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     var query by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -276,8 +291,28 @@ private fun ProjectSheet(state: NewThreadUiState, onPick: (ProjectEntry) -> Unit
         }
         SearchField(query, { query = it }, "Search projects")
         val filtered = state.projects.filter { query.isBlank() || it.project.title.contains(query, true) || it.project.workspaceRoot.contains(query, true) }
+        val scratch = state.scratch.takeIf { query.isBlank() || "no project".contains(query.trim(), true) }.orEmpty()
         LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
-            if (filtered.isEmpty()) item {
+            items(scratch, key = { "scratch/${it.environmentId}" }) { option ->
+                val chosen = state.selected?.isScratch == true && state.selected.environmentId == option.environmentId
+                ListItem(
+                    modifier = Modifier.padding(horizontal = 12.dp).clip(RoundedCornerShape(20.dp)).clickable { onPickNoProject(option.environmentId) },
+                    headlineContent = { Text("No project") },
+                    supportingContent = {
+                        Text(
+                            listOfNotNull("Start a task without a project", option.environmentLabel.takeIf { state.showEnvironment }).joinToString("  ·  "),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    leadingContent = { Icon(Icons.Rounded.ChatBubbleOutline, null) },
+                    trailingContent = { if (chosen) Icon(Icons.Rounded.Check, "Selected", tint = MaterialTheme.colorScheme.primary) },
+                    colors = ListItemDefaults.colors(containerColor = if (chosen) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                )
+            }
+            if (filtered.isEmpty() && scratch.isEmpty()) item {
                 Text("No projects found. Add a folder on the host to get started.", Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             items(filtered, key = { "${it.environmentId}/${it.project.id}" }) { p ->
